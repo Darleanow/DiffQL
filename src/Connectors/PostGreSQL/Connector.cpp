@@ -27,7 +27,7 @@ std::vector<Table> PostgresqlConnector::get_schema()
 
 std::ifstream PostgresqlConnector::dump()
 {
-    std::string tmp_file = "dump.sql";
+    std::string tmp_file = "pg_dump.sql";
 
     std::string cmd =
         "pg_dump"
