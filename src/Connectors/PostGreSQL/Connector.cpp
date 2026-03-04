@@ -15,13 +15,13 @@
 
 
 PostgresqlConnector::PostgresqlConnector(PostgresqlConn conn_object)
-    : m_conn_object(conn_object) {}
+    : m_conn_object(conn_object) {};
 
 PostgresqlConnector::~PostgresqlConnector() {}
 
 std::vector<Table> PostgresqlConnector::get_schema()
 {
-    parse(dump());
+    parse(file: dump());
     return std::vector<Table>();
 }
 
