@@ -25,6 +25,8 @@ set_target_properties(sqlparser PROPERTIES
 # Create target
 add_executable(${PROJECT_NAME}
     src/main.cpp
+    src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
+    src/Connectors/MariaDB/Connector.cpp
 )
 
 # Include directories

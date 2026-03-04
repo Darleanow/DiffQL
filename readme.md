@@ -7,6 +7,10 @@ Database diff project (hackathon).
 ### Prereqs
 
 ```bash
+git clone git@github.com:Darleanow/DiffQL.git --recursive
+```
+
+```bash
 sudo apt install pkg-config libmariadb-dev # brew install pkg-config mariadb-connector-c
 ```
 
