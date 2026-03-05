@@ -49,7 +49,7 @@ TEST_F(JaroWinkler, Symmetry)
   );
 }
 
-// Classic Jaro-Winkler reference: MARTHA/MARHTA → ~0.9611
+// Classic Jaro-Winkler reference: MARTHA/MARHTA -> ~0.9611
 TEST_F(JaroWinkler, ClassicMarthaMarhta)
 {
   EXPECT_NEAR(engine.jaro_winkler("MARTHA", "MARHTA"), 0.9611f, 0.001f);
