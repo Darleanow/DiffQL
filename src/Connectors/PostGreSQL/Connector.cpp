@@ -22,6 +22,32 @@ std::string trim(const std::string &s)
   return s.substr(a, b - a);
 }
 
+std::string normalize_statement_lead(std::string s)
+{
+  while(true) {
+    s = trim(s);
+    if(s.empty()) return s;
+
+    if(s[0] == '\\') {
+      size_t nl = s.find('\n');
+      if(nl == std::string::npos) return "";
+      s = s.substr(nl + 1);
+      continue;
+    }
+
+    if(s.size() >= 2 && s[0] == '-' && s[1] == '-') {
+      size_t nl = s.find('\n');
+      if(nl == std::string::npos) return "";
+      s = s.substr(nl + 1);
+      continue;
+    }
+
+    break;
+  }
+
+  return s;
+}
+
 std::string lower(std::string s)
 {
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
@@ -475,6 +501,27 @@ void parse_alter_table(const std::string &stmt,
   auto it = index.find(table_key(schema, table_name));
   if(it == index.end()) return;
 
+  size_t alter_column = ls.find("alter column", p);
+  if(alter_column != std::string::npos) {
+    size_t col_pos = alter_column + std::string("alter column").size();
+    auto col_name = parse_identifier(stmt, col_pos);
+    if(col_name.has_value()) {
+      size_t set_default = ls.find("set default", col_pos);
+      if(set_default != std::string::npos) {
+        std::string value = trim(stmt.substr(set_default + std::string("set default").size()));
+        for(Column &col : tables[it->second].columns) {
+          if(lower(col.name) == lower(*col_name)) {
+            col.default_value = value.empty() ? std::optional<std::string>{}
+                                              : std::optional<std::string>{value};
+            if(lower(value).find("nextval(") != std::string::npos) {
+              col.auto_increment = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
   size_t add = ls.find("add", p);
   if(add == std::string::npos) return;
 
@@ -572,9 +619,14 @@ std::ifstream PostgreSQLConnector::dump() const
   std::string host = m_conn_object.host.empty() ? "localhost" : m_conn_object.host;
   std::string port = m_conn_object.port.empty() ? "5432" : m_conn_object.port;
 
+  const char *env_pg_dump = std::getenv("DIFFQL_PG_DUMP_BIN");
+  std::string pg_dump_bin = (env_pg_dump == nullptr || std::string(env_pg_dump).empty())
+                                ? "pg_dump"
+                                : std::string(env_pg_dump);
+
   std::string cmd;
   if(!m_conn_object.passwd.empty()) cmd += "PGPASSWORD=" + shell_quote(m_conn_object.passwd) + " ";
-  cmd += "pg_dump --schema-only --no-owner --no-privileges --no-comments";
+  cmd += shell_quote(pg_dump_bin) + " --schema-only --no-owner --no-privileges --no-comments";
   cmd += " -h " + shell_quote(host);
   cmd += " -p " + shell_quote(port);
   cmd += " -U " + shell_quote(m_conn_object.user);
@@ -597,7 +649,7 @@ std::vector<Table> PostgreSQLConnector::parse(std::istream &input) const
   std::unordered_map<std::string, size_t> index;
 
   for(const std::string &raw : statements) {
-    std::string s = trim(raw);
+    std::string s = normalize_statement_lead(raw);
     if(s.empty()) continue;
 
     if(starts_with_ci(s, "CREATE TABLE")) {

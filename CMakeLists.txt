@@ -6,7 +6,10 @@ project(DiffQL
 )
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_CLANG_TIDY clang-tidy)
+find_program(CLANG_TIDY_BIN NAMES clang-tidy)
+if(CLANG_TIDY_BIN)
+  set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_BIN})
+endif()
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
@@ -14,35 +17,49 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Dependencies
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MARIADB REQUIRED mariadb)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(MARIADB QUIET mariadb)
+endif()
 
-add_library(sqlparser STATIC IMPORTED)
-set_target_properties(sqlparser PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/external/sql-parser/libsqlparser.so
+if(EXISTS ${PROJECT_SOURCE_DIR}/external/sql-parser/libsqlparser.so)
+  add_library(sqlparser SHARED IMPORTED GLOBAL)
+  set_target_properties(sqlparser PROPERTIES
+      IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/external/sql-parser/libsqlparser.so
+  )
+endif()
+
+if(MARIADB_FOUND AND TARGET sqlparser)
+  add_executable(${PROJECT_NAME}
+      src/main.cpp
+      src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
+      src/Connectors/MariaDB/Connector.cpp
+  )
+
+  target_include_directories(${PROJECT_NAME}
+      PRIVATE
+          ${PROJECT_SOURCE_DIR}/include
+          ${PROJECT_SOURCE_DIR}/external/sql-parser/src
+          ${MARIADB_INCLUDE_DIRS}
+  )
+
+  target_link_libraries(${PROJECT_NAME}
+      PRIVATE
+          sqlparser
+          ${MARIADB_LIBRARIES}
+  )
+
+  target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(PostgreSQLParserTest
+    src/postgresql_parser_test_main.cpp
+    src/Connectors/PostGreSQL/Connector.cpp
 )
 
-# Create target
-add_executable(${PROJECT_NAME}
-    src/main.cpp
-    src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
-    src/Connectors/MariaDB/Connector.cpp
-)
-
-# Include directories
-target_include_directories(${PROJECT_NAME}
+target_include_directories(PostgreSQLParserTest
     PRIVATE
         ${PROJECT_SOURCE_DIR}/include
-        ${PROJECT_SOURCE_DIR}/external/sql-parser/src
-        ${MARIADB_INCLUDE_DIRS}
 )
 
-# Link libraries
-target_link_libraries(${PROJECT_NAME} 
-    PRIVATE 
-        sqlparser
-        ${MARIADB_LIBRARIES}
-)
-
-# Compile options
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(PostgreSQLParserTest PRIVATE -Wall -Wextra -Wpedantic)

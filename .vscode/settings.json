@@ -2,6 +2,7 @@
     "conventionalCommits.scopes": [
         "PostGreSQL",
         "dump",
-        "Parser"
+        "Parser",
+        "test"
     ]
 }
