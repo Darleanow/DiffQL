@@ -130,12 +130,16 @@ struct TemporaryFile
 {
   std::filesystem::path path;
 
-  explicit TemporaryFile(std::filesystem::path p) : path(std::move(p)) {}
+  explicit TemporaryFile(std::filesystem::path file_path)
+      : path(std::move(file_path))
+  {
+  }
 
   ~TemporaryFile()
   {
-    if(path.empty())
+    if(path.empty()) {
       return;
+    }
     std::error_code ec;
     std::filesystem::remove(path, ec);
   }
@@ -150,8 +154,9 @@ struct TemporaryFile
 
   TemporaryFile &operator=(TemporaryFile &&other) noexcept
   {
-    if(this == &other)
+    if(this == &other) {
       return *this;
+    }
     std::error_code ec;
     std::filesystem::remove(path, ec);
     path = std::move(other.path);
@@ -175,11 +180,13 @@ std::string trim(const std::string &value)
   size_t end   = value.size();
 
   while(begin < end &&
-        std::isspace(static_cast<unsigned char>(value[begin])) != 0)
+        std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
     ++begin;
+  }
   while(end > begin &&
-        std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+        std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
     --end;
+  }
 
   return value.substr(begin, end - begin);
 }
@@ -213,8 +220,9 @@ std::vector<std::string> split(const std::string &value, char sep)
   size_t                   start = 0;
 
   for(size_t i = 0; i < value.size(); ++i) {
-    if(value[i] != sep)
+    if(value[i] != sep) {
       continue;
+    }
     out.emplace_back(value.substr(start, i - start));
     start = i + 1;
   }
@@ -227,8 +235,9 @@ bool starts_with_case_insensitive(
     const std::string &value, const std::string &prefix
 )
 {
-  if(prefix.size() > value.size())
+  if(prefix.size() > value.size()) {
     return false;
+  }
 
   for(size_t i = 0; i < prefix.size(); ++i) {
     if(std::tolower(static_cast<unsigned char>(value[i])) !=
@@ -245,9 +254,9 @@ std::string sanitize_dump_sql(const std::string &dump_sql)
   std::string sanitized;
 
   for(const std::string &line : split(dump_sql, '\n')) {
-    const std::string trimmed_line = trim(line);
-    if(starts_with_case_insensitive(trimmed_line, "SET transaction_timeout"))
+    if(starts_with_case_insensitive(trim(line), "SET transaction_timeout")) {
       continue;
+    }
     sanitized += line;
     sanitized.push_back('\n');
   }
@@ -275,27 +284,32 @@ std::string shell_quote(const std::string &value)
 
 int normalize_status(int status)
 {
-  if(status == -1)
+  if(status == -1) {
     return -1;
-  if(WIFEXITED(status))
+  }
+  if(WIFEXITED(status)) {
     return WEXITSTATUS(status);
-  if(WIFSIGNALED(status))
+  }
+  if(WIFSIGNALED(status)) {
     return 128 + WTERMSIG(status);
+  }
   return status;
 }
 
 std::string env_or_default(const char *name, const std::string &fallback)
 {
   const char *value = std::getenv(name);
-  if(value == nullptr || std::string(value).empty())
+  if(value == nullptr || std::string(value).empty()) {
     return fallback;
+  }
   return std::string(value);
 }
 
 std::string connection_env_prefix(const PostgreSQLConn &conn)
 {
-  if(conn.passwd.empty())
+  if(conn.passwd.empty()) {
     return {};
+  }
   return "PGPASSWORD=" + shell_quote(conn.passwd) + " ";
 }
 
@@ -319,8 +333,9 @@ std::pair<int, std::string> run_capture_command(const std::string &inner_command
 {
   const std::string command = "bash -lc " + shell_quote(inner_command);
   FILE             *pipe    = popen(command.c_str(), "r");
-  if(pipe == nullptr)
+  if(pipe == nullptr) {
     throw std::runtime_error("failed to run command");
+  }
 
   std::string output;
   char        buffer[4096];
@@ -364,16 +379,21 @@ std::optional<int> to_int(const std::string &value)
 
 std::string action_from_code(const std::string &code)
 {
-  if(code == "a")
+  if(code == "a") {
     return "NO ACTION";
-  if(code == "r")
+  }
+  if(code == "r") {
     return "RESTRICT";
-  if(code == "c")
+  }
+  if(code == "c") {
     return "CASCADE";
-  if(code == "n")
+  }
+  if(code == "n") {
     return "SET NULL";
-  if(code == "d")
+  }
+  if(code == "d") {
     return "SET DEFAULT";
+  }
   return "NO ACTION";
 }
 
@@ -386,57 +406,74 @@ CanonicalType map_type(const std::string &raw)
     const size_t close =
         normalized.find(')', open == std::string::npos ? 0 : open + 1);
     if(open == std::string::npos || close == std::string::npos ||
-       close <= open + 1)
+       close <= open + 1) {
       return false;
+    }
 
     const std::optional<int> parsed =
         to_int(trim(normalized.substr(open + 1, close - open - 1)));
-    if(!parsed.has_value())
+    if(!parsed.has_value()) {
       return false;
+    }
+
     value = *parsed;
     return true;
   };
 
-  if(normalized == "smallint" || normalized == "int2")
+  if(normalized == "smallint" || normalized == "int2") {
     return {CanonicalType::SMALLINT, {}, {}, {}, raw};
-  if(normalized == "bigint" || normalized == "int8")
+  }
+  if(normalized == "bigint" || normalized == "int8") {
     return {CanonicalType::BIGINT, {}, {}, {}, raw};
-  if(normalized == "integer" || normalized == "int" || normalized == "int4")
+  }
+  if(normalized == "integer" || normalized == "int" || normalized == "int4") {
     return {CanonicalType::INTEGER, {}, {}, {}, raw};
+  }
 
   if(normalized.find("character varying") == 0 ||
      normalized.find("varchar") == 0) {
     int length = 0;
-    if(parse_length(length))
+    if(parse_length(length)) {
       return {CanonicalType::VARCHAR, length, {}, {}, raw};
+    }
     return {CanonicalType::VARCHAR, {}, {}, {}, raw};
   }
 
   if(normalized.find("character") == 0 || normalized.find("char") == 0) {
     int length = 0;
-    if(parse_length(length))
+    if(parse_length(length)) {
       return {CanonicalType::CHAR, length, {}, {}, raw};
+    }
     return {CanonicalType::CHAR, {}, {}, {}, raw};
   }
 
-  if(normalized == "text")
+  if(normalized == "text") {
     return {CanonicalType::TEXT, {}, {}, {}, raw};
-  if(normalized.find("numeric") == 0 || normalized.find("decimal") == 0)
+  }
+  if(normalized.find("numeric") == 0 || normalized.find("decimal") == 0) {
     return {CanonicalType::DECIMAL, {}, {}, {}, raw};
-  if(normalized == "real" || normalized == "float4")
+  }
+  if(normalized == "real" || normalized == "float4") {
     return {CanonicalType::FLOAT, {}, {}, {}, raw};
-  if(normalized == "double precision" || normalized == "float8")
+  }
+  if(normalized == "double precision" || normalized == "float8") {
     return {CanonicalType::DOUBLE, {}, {}, {}, raw};
-  if(normalized == "date")
+  }
+  if(normalized == "date") {
     return {CanonicalType::DATE, {}, {}, {}, raw};
-  if(normalized.find("timestamp") == 0 || normalized == "timestamptz")
+  }
+  if(normalized.find("timestamp") == 0 || normalized == "timestamptz") {
     return {CanonicalType::TIMESTAMP, {}, {}, {}, raw};
-  if(normalized == "boolean" || normalized == "bool")
+  }
+  if(normalized == "boolean" || normalized == "bool") {
     return {CanonicalType::BOOLEAN, {}, {}, {}, raw};
-  if(normalized == "bytea")
+  }
+  if(normalized == "bytea") {
     return {CanonicalType::BLOB, {}, {}, {}, raw};
-  if(normalized == "json" || normalized == "jsonb")
+  }
+  if(normalized == "json" || normalized == "jsonb") {
     return {CanonicalType::JSON, {}, {}, {}, raw};
+  }
 
   return {CanonicalType::TEXT, {}, {}, {}, raw};
 }
@@ -444,16 +481,6 @@ CanonicalType map_type(const std::string &raw)
 std::string table_key(const std::string &schema, const std::string &table)
 {
   return to_lower(schema) + "." + to_lower(table);
-}
-
-Table *find_table(
-    CatalogState &catalog, const std::string &schema, const std::string &table
-)
-{
-  const auto it = catalog.table_index.find(table_key(schema, table));
-  if(it == catalog.table_index.end())
-    return nullptr;
-  return &catalog.tables[it->second];
 }
 
 std::vector<std::vector<std::string>> query_rows(
@@ -464,8 +491,9 @@ std::vector<std::vector<std::string>> query_rows(
 
   {
     std::ofstream out(query_file.path);
-    if(!out.is_open())
+    if(!out.is_open()) {
       throw std::runtime_error("unable to create query file");
+    }
     out << sql;
   }
 
@@ -476,212 +504,247 @@ std::vector<std::vector<std::string>> query_rows(
       shell_quote(db) + " -f " + shell_quote(query_file.path.string());
 
   const auto [status, output] = run_capture_command(command);
-  if(status != 0)
+  if(status != 0) {
     throw std::runtime_error("psql query failed");
+  }
 
   std::vector<std::vector<std::string>> rows;
   for(const std::string &raw_line : split(output, '\n')) {
     const std::string line = trim(raw_line);
-    if(line.empty())
+    if(line.empty()) {
       continue;
+    }
     rows.push_back(split(line, FIELD_SEPARATOR));
   }
 
   return rows;
 }
 
-void load_tables(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
+class CatalogLoader
 {
-  for(const auto &row : query_rows(conn, db, QUERY_TABLES)) {
-    if(row.size() < 2)
-      continue;
-
-    Table table {
-        .name         = row[1],
-        .schema       = row[0],
-        .columns      = {},
-        .primary_key  = std::nullopt,
-        .foreign_keys = {},
-        .indexes      = {},
-        .checks       = {}
-    };
-
-    catalog.table_index[table_key(table.schema, table.name)] =
-        catalog.tables.size();
-    catalog.tables.push_back(std::move(table));
+public:
+  CatalogLoader(const PostgreSQLConn &conn, std::string db)
+      : conn_(conn),
+        db_(std::move(db))
+  {
   }
-}
 
-void load_columns(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
-{
-  for(const auto &row : query_rows(conn, db, QUERY_COLUMNS)) {
-    if(row.size() < 7)
-      continue;
-
-    Table *table = find_table(catalog, row[0], row[1]);
-    if(table == nullptr)
-      continue;
-
-    const std::optional<int> position = to_int(row[2]);
-    if(!position.has_value())
-      continue;
-
-    std::optional<std::string> default_value;
-    if(!row[6].empty())
-      default_value = row[6];
-
-    const bool is_auto_increment =
-        default_value.has_value() &&
-        to_lower(*default_value).find("nextval(") != std::string::npos;
-
-    table->columns.push_back(Column {
-        .name           = row[3],
-        .type           = map_type(row[4]),
-        .nullable       = (row[5] == "true"),
-        .default_value  = default_value,
-        .auto_increment = is_auto_increment,
-        .position       = *position,
-        .source_dbms    = "postgresql"
-    });
+  std::vector<Table> load()
+  {
+    load_tables();
+    load_columns();
+    load_primary_keys();
+    load_foreign_keys();
+    load_indexes();
+    load_checks();
+    return std::move(state_.tables);
   }
-}
 
-void load_primary_keys(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
-{
-  for(const auto &row : query_rows(conn, db, QUERY_PRIMARY_KEYS)) {
-    if(row.size() < 5)
-      continue;
+private:
+  const PostgreSQLConn                 &conn_;
+  std::string                           db_;
+  CatalogState                          state_;
 
-    Table *table = find_table(catalog, row[0], row[1]);
-    if(table == nullptr)
-      continue;
+  std::vector<std::vector<std::string>> rows(const std::string &sql) const
+  {
+    return query_rows(conn_, db_, sql);
+  }
 
-    if(!table->primary_key.has_value()) {
-      table->primary_key =
-          PrimaryKey {.column_names = {}, .constraint_name = row[2]};
+  Table *find_table(const std::string &schema, const std::string &table)
+  {
+    const auto it = state_.table_index.find(table_key(schema, table));
+    if(it == state_.table_index.end()) {
+      return nullptr;
     }
+    return &state_.tables[it->second];
+  }
 
-    table->primary_key->column_names.push_back(row[3]);
+  void load_tables()
+  {
+    for(const auto &row : rows(QUERY_TABLES)) {
+      if(row.size() < 2) {
+        continue;
+      }
 
-    for(Column &column : table->columns) {
-      if(iequals(column.name, row[3])) {
-        column.nullable = false;
+      Table table {
+          .name         = row[1],
+          .schema       = row[0],
+          .columns      = {},
+          .primary_key  = std::nullopt,
+          .foreign_keys = {},
+          .indexes      = {},
+          .checks       = {}
+      };
+
+      state_.table_index[table_key(table.schema, table.name)] =
+          state_.tables.size();
+      state_.tables.push_back(std::move(table));
+    }
+  }
+
+  void load_columns()
+  {
+    for(const auto &row : rows(QUERY_COLUMNS)) {
+      if(row.size() < 7) {
+        continue;
+      }
+
+      Table *table = find_table(row[0], row[1]);
+      if(table == nullptr) {
+        continue;
+      }
+
+      const std::optional<int> position = to_int(row[2]);
+      if(!position.has_value()) {
+        continue;
+      }
+
+      std::optional<std::string> default_value;
+      if(!row[6].empty()) {
+        default_value = row[6];
+      }
+
+      const bool is_auto_increment =
+          default_value.has_value() &&
+          to_lower(*default_value).find("nextval(") != std::string::npos;
+
+      table->columns.push_back(Column {
+          .name           = row[3],
+          .type           = map_type(row[4]),
+          .nullable       = (row[5] == "true"),
+          .default_value  = default_value,
+          .auto_increment = is_auto_increment,
+          .position       = *position,
+          .source_dbms    = "postgresql"
+      });
+    }
+  }
+
+  void load_primary_keys()
+  {
+    for(const auto &row : rows(QUERY_PRIMARY_KEYS)) {
+      if(row.size() < 5) {
+        continue;
+      }
+
+      Table *table = find_table(row[0], row[1]);
+      if(table == nullptr) {
+        continue;
+      }
+
+      if(!table->primary_key.has_value()) {
+        table->primary_key =
+            PrimaryKey {.column_names = {}, .constraint_name = row[2]};
+      }
+
+      table->primary_key->column_names.push_back(row[3]);
+
+      for(Column &column : table->columns) {
+        if(iequals(column.name, row[3])) {
+          column.nullable = false;
+        }
       }
     }
   }
-}
 
-size_t find_foreign_key_index(const Table &table, const std::string &name)
-{
-  for(size_t i = 0; i < table.foreign_keys.size(); ++i) {
-    if(table.foreign_keys[i].name == name)
-      return i;
-  }
-  return table.foreign_keys.size();
-}
+  void load_foreign_keys()
+  {
+    for(const auto &row : rows(QUERY_FOREIGN_KEYS)) {
+      if(row.size() < 10) {
+        continue;
+      }
 
-void load_foreign_keys(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
-{
-  for(const auto &row : query_rows(conn, db, QUERY_FOREIGN_KEYS)) {
-    if(row.size() < 10)
-      continue;
+      Table *table = find_table(row[0], row[1]);
+      if(table == nullptr) {
+        continue;
+      }
 
-    Table *table = find_table(catalog, row[0], row[1]);
-    if(table == nullptr)
-      continue;
+      size_t fk_index = table->foreign_keys.size();
+      for(size_t i = 0; i < table->foreign_keys.size(); ++i) {
+        if(table->foreign_keys[i].name == row[2]) {
+          fk_index = i;
+          break;
+        }
+      }
 
-    size_t fk_index = find_foreign_key_index(*table, row[2]);
-    if(fk_index == table->foreign_keys.size()) {
-      const std::string referenced_table =
-          row[3] == "public" ? row[4] : row[3] + "." + row[4];
+      if(fk_index == table->foreign_keys.size()) {
+        const std::string referenced_table =
+            row[3] == "public" ? row[4] : row[3] + "." + row[4];
 
-      table->foreign_keys.push_back(ForeignKey {
-          .name               = row[2],
-          .column_names       = {},
-          .referenced_table   = referenced_table,
-          .referenced_columns = {},
-          .on_delete          = action_from_code(row[8]),
-          .on_update          = action_from_code(row[9])
-      });
+        table->foreign_keys.push_back(ForeignKey {
+            .name               = row[2],
+            .column_names       = {},
+            .referenced_table   = referenced_table,
+            .referenced_columns = {},
+            .on_delete          = action_from_code(row[8]),
+            .on_update          = action_from_code(row[9])
+        });
 
-      fk_index = table->foreign_keys.size() - 1;
+        fk_index = table->foreign_keys.size() - 1;
+      }
+
+      table->foreign_keys[fk_index].column_names.push_back(row[5]);
+      table->foreign_keys[fk_index].referenced_columns.push_back(row[6]);
     }
-
-    table->foreign_keys[fk_index].column_names.push_back(row[5]);
-    table->foreign_keys[fk_index].referenced_columns.push_back(row[6]);
   }
-}
 
-void load_indexes(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
-{
-  for(const auto &row : query_rows(conn, db, QUERY_INDEXES)) {
-    if(row.size() < 6)
-      continue;
+  void load_indexes()
+  {
+    for(const auto &row : rows(QUERY_INDEXES)) {
+      if(row.size() < 6) {
+        continue;
+      }
 
-    Table *table = find_table(catalog, row[0], row[1]);
-    if(table == nullptr)
-      continue;
+      Table *table = find_table(row[0], row[1]);
+      if(table == nullptr) {
+        continue;
+      }
 
-    std::vector<std::string> columns;
-    if(!row[5].empty())
-      columns = split(row[5], ',');
+      std::vector<std::string> columns;
+      if(!row[5].empty()) {
+        columns = split(row[5], ',');
+      }
 
-    table->indexes.push_back(Index {
-        .name         = row[2],
-        .column_names = columns,
-        .unique       = (row[3] == "true"),
-        .type         = to_upper(row[4])
-    });
+      table->indexes.push_back(Index {
+          .name         = row[2],
+          .column_names = columns,
+          .unique       = (row[3] == "true"),
+          .type         = to_upper(row[4])
+      });
+    }
   }
-}
 
-void load_checks(
-    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
-)
-{
-  for(const auto &row : query_rows(conn, db, QUERY_CHECKS)) {
-    if(row.size() < 4)
-      continue;
+  void load_checks()
+  {
+    for(const auto &row : rows(QUERY_CHECKS)) {
+      if(row.size() < 4) {
+        continue;
+      }
 
-    Table *table = find_table(catalog, row[0], row[1]);
-    if(table == nullptr)
-      continue;
+      Table *table = find_table(row[0], row[1]);
+      if(table == nullptr) {
+        continue;
+      }
 
-    table->checks.push_back(
-        CheckConstraint {.name = row[2], .expression = row[3]}
-    );
+      table->checks.push_back(
+          CheckConstraint {.name = row[2], .expression = row[3]}
+      );
+    }
   }
-}
+};
 
 std::vector<Table>
     introspect_schema(const PostgreSQLConn &conn, const std::string &db)
 {
-  CatalogState catalog;
-
-  load_tables(catalog, conn, db);
-  load_columns(catalog, conn, db);
-  load_primary_keys(catalog, conn, db);
-  load_foreign_keys(catalog, conn, db);
-  load_indexes(catalog, conn, db);
-  load_checks(catalog, conn, db);
-
-  return catalog.tables;
+  CatalogLoader loader(conn, db);
+  return loader.load();
 }
 
 TempDbGuard::~TempDbGuard()
 {
-  if(!enabled)
+  if(!enabled) {
     return;
+  }
 
   const std::string dropdb_bin = env_or_default("DIFFQL_DROPDB_BIN", "dropdb");
   const std::string command =
@@ -736,8 +799,10 @@ std::vector<Table> PostgreSQLConnector::parse(std::istream &input) const
   std::string dump_sql(
       (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>()
   );
-  if(dump_sql.empty())
+
+  if(dump_sql.empty()) {
     return {};
+  }
 
   const std::string sanitized_dump = sanitize_dump_sql(dump_sql);
 
