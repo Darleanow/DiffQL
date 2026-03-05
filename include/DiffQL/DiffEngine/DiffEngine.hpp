@@ -24,6 +24,7 @@ struct TableDiff
 {
   DiffAction                                action;
   std::string                               table_name;
+  std::optional<std::string>                new_name;
 
   std::vector<ElementDiff<Column>>          column_diffs;
   std::optional<ElementDiff<PrimaryKey>>    pk_diff;
