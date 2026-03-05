@@ -168,8 +168,11 @@ const SchemaDiff &DiffEngine::compare_schemas()
       std::getline(std::cin, answer);
 
       if(answer == "y" || answer == "Y") {
-        if(auto td = compare_tables(*orig, *best))
+        if(auto td = compare_tables(*orig, *best)) {
+          if(orig->name != best->name)
+            td->new_name = best->name;
           m_diff.table_diffs.push_back(std::move(*td));
+        }
         matched_orig.insert(orig);
         matched_dest.insert(best);
       }
@@ -181,6 +184,7 @@ const SchemaDiff &DiffEngine::compare_schemas()
       m_diff.table_diffs.push_back(
           {.action       = DiffAction::DROPPED,
            .table_name   = t->name,
+           .new_name     = std::nullopt,
            .column_diffs = {},
            .pk_diff      = {},
            .fk_diffs     = {},
@@ -193,6 +197,7 @@ const SchemaDiff &DiffEngine::compare_schemas()
       m_diff.table_diffs.push_back(
           {.action       = DiffAction::ADDED,
            .table_name   = t->name,
+           .new_name     = std::nullopt,
            .column_diffs = {},
            .pk_diff      = {},
            .fk_diffs     = {},

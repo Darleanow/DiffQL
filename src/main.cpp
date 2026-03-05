@@ -1,7 +1,11 @@
 #include "DiffQL/Connectors/MariaDB/Connector.hpp"
 #include "DiffQL/DiffEngine/DiffEngine.hpp"
+#include "DiffQL/MigrationGenerator/MariaDBMigrationGenerator.hpp"
+#include "DiffQL/MigrationGenerator/PostgreSQLMigrationGenerator.hpp"
 
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -132,6 +136,39 @@ int main(void)
   const auto &diff = engine.compare_schemas();
 
   dump_schema_diff(diff);
+
+  // Generate migration scripts
+  std::cout << "\n Generate Migration Script\n";
+  std::cout << "Select target database:\n";
+  std::cout << "  1. MariaDB\n";
+  std::cout << "  2. PostgreSQL\n";
+  std::cout << "Choice [1/2]: ";
+
+  std::string choice;
+  std::getline(std::cin, choice);
+
+  std::unique_ptr<MigrationGenerator> generator;
+  std::string output_file;
+
+  if(choice == "2") {
+    generator   = std::make_unique<PostgreSQLMigrationGenerator>();
+    output_file = "migration_postgresql.sql";
+  } else {
+    generator   = std::make_unique<MariaDBMigrationGenerator>();
+    output_file = "migration_mariadb.sql";
+  }
+
+  std::string script = generator->generate(diff, schema_origin, schema_dest);
+
+  std::cout << "\n" << script;
+
+  std::ofstream out(output_file);
+  if(out) {
+    out << script;
+    std::cout << "\nMigration script saved to: " << output_file << "\n";
+  } else {
+    std::cerr << "\nFailed to save migration script to file.\n";
+  }
 
   return 0;
 }
