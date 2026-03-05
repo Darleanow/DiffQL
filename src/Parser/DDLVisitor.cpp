@@ -217,7 +217,7 @@ std::any DDLVisitor::visitTinyTextDataType(
     MariaDBDDLParser::TinyTextDataTypeContext * /*ctx*/
 )
 {
-  m_current_column.type.base = CanonicalType::TINYTEXT;
+  m_current_column.type.base = CanonicalType::TEXT;
   return {};
 }
 

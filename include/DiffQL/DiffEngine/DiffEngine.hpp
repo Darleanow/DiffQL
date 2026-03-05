@@ -49,6 +49,9 @@ public:
   const SchemaDiff &compare_schemas();
   void              generate_report(const SchemaDiff &schema) const;
 
+protected:
+  float jaro_winkler(const std::string &s1, const std::string &s2) const;
+
 private:
   std::vector<Table>       m_schema_origin, m_schema_dest;
 

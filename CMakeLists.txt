@@ -35,11 +35,20 @@ FetchContent_Declare(
     SOURCE_SUBDIR  runtime/Cpp
 )
 
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.15.2
+)
+
 set(ANTLR_BUILD_CPP_TESTS OFF CACHE BOOL "" FORCE)
 set(ANTLR4_INSTALL OFF CACHE BOOL "" FORCE)
 set(ANTLR_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(antlr4-runtime)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(antlr4-runtime googletest)
 
 # Generated ANTLR sources (separate target, no clang-tidy)
 set(ANTLR_GENERATED_DIR ${PROJECT_SOURCE_DIR}/generated)
@@ -85,3 +94,24 @@ target_link_libraries(${PROJECT_NAME}
 # Compile options
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "clang-tidy")
+
+# Tests
+enable_testing()
+
+add_executable(DiffQL_Tests
+    tests/DiffEngineTests.cpp
+    src/DiffEngine/DiffEngine.cpp
+)
+
+target_include_directories(DiffQL_Tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(DiffQL_Tests
+    PRIVATE
+        GTest::gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(DiffQL_Tests)
