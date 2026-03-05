@@ -10,5 +10,12 @@ public:
 
 class MariaDBTypeMapper : public TypeMapper
 {
+public:
+  CanonicalType map(const std::string &raw) override;
+};
+
+class PostgreSQLTypeMapper : public TypeMapper
+{
+public:
   CanonicalType map(const std::string &raw) override;
 };

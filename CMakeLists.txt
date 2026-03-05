@@ -54,6 +54,7 @@ endif()
 
 add_executable(PostgreSQLParserTest
     src/tests/postgresql_parser_test_main.cpp
+    src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
     src/Connectors/PostGreSQL/Connector.cpp
 )
 
@@ -66,6 +67,7 @@ target_compile_options(PostgreSQLParserTest PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(PostgreSQLSchemaDiffTest
     src/tests/postgresql_schema_diff_test_main.cpp
+    src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
     src/Connectors/PostGreSQL/Connector.cpp
     src/Diff/SchemaDiff.cpp
 )

@@ -1,4 +1,5 @@
 #include "DiffQL/Connectors/PostGreSQL/Connector.hpp"
+#include "DiffQL/CanonicalObjectModel/TypeNormalization/TypeMapper.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -397,87 +398,6 @@ std::string action_from_code(const std::string &code)
   return "NO ACTION";
 }
 
-CanonicalType map_type(const std::string &raw)
-{
-  const std::string normalized = to_lower(trim(raw));
-
-  auto              parse_length = [&](int &value) -> bool {
-    const size_t open = normalized.find('(');
-    const size_t close =
-        normalized.find(')', open == std::string::npos ? 0 : open + 1);
-    if(open == std::string::npos || close == std::string::npos ||
-       close <= open + 1) {
-      return false;
-    }
-
-    const std::optional<int> parsed =
-        to_int(trim(normalized.substr(open + 1, close - open - 1)));
-    if(!parsed.has_value()) {
-      return false;
-    }
-
-    value = *parsed;
-    return true;
-  };
-
-  if(normalized == "smallint" || normalized == "int2") {
-    return {CanonicalType::SMALLINT, {}, {}, {}, raw};
-  }
-  if(normalized == "bigint" || normalized == "int8") {
-    return {CanonicalType::BIGINT, {}, {}, {}, raw};
-  }
-  if(normalized == "integer" || normalized == "int" || normalized == "int4") {
-    return {CanonicalType::INTEGER, {}, {}, {}, raw};
-  }
-
-  if(normalized.find("character varying") == 0 ||
-     normalized.find("varchar") == 0) {
-    int length = 0;
-    if(parse_length(length)) {
-      return {CanonicalType::VARCHAR, length, {}, {}, raw};
-    }
-    return {CanonicalType::VARCHAR, {}, {}, {}, raw};
-  }
-
-  if(normalized.find("character") == 0 || normalized.find("char") == 0) {
-    int length = 0;
-    if(parse_length(length)) {
-      return {CanonicalType::CHAR, length, {}, {}, raw};
-    }
-    return {CanonicalType::CHAR, {}, {}, {}, raw};
-  }
-
-  if(normalized == "text") {
-    return {CanonicalType::TEXT, {}, {}, {}, raw};
-  }
-  if(normalized.find("numeric") == 0 || normalized.find("decimal") == 0) {
-    return {CanonicalType::DECIMAL, {}, {}, {}, raw};
-  }
-  if(normalized == "real" || normalized == "float4") {
-    return {CanonicalType::FLOAT, {}, {}, {}, raw};
-  }
-  if(normalized == "double precision" || normalized == "float8") {
-    return {CanonicalType::DOUBLE, {}, {}, {}, raw};
-  }
-  if(normalized == "date") {
-    return {CanonicalType::DATE, {}, {}, {}, raw};
-  }
-  if(normalized.find("timestamp") == 0 || normalized == "timestamptz") {
-    return {CanonicalType::TIMESTAMP, {}, {}, {}, raw};
-  }
-  if(normalized == "boolean" || normalized == "bool") {
-    return {CanonicalType::BOOLEAN, {}, {}, {}, raw};
-  }
-  if(normalized == "bytea") {
-    return {CanonicalType::BLOB, {}, {}, {}, raw};
-  }
-  if(normalized == "json" || normalized == "jsonb") {
-    return {CanonicalType::JSON, {}, {}, {}, raw};
-  }
-
-  return {CanonicalType::TEXT, {}, {}, {}, raw};
-}
-
 std::string table_key(const std::string &schema, const std::string &table)
 {
   return to_lower(schema) + "." + to_lower(table);
@@ -584,6 +504,8 @@ private:
 
   void load_columns()
   {
+    PostgreSQLTypeMapper type_mapper;
+
     for(const auto &row : rows(QUERY_COLUMNS)) {
       if(row.size() < 7) {
         continue;
@@ -610,7 +532,7 @@ private:
 
       table->columns.push_back(Column {
           .name           = row[3],
-          .type           = map_type(row[4]),
+          .type           = type_mapper.map(row[4]),
           .nullable       = (row[5] == "true"),
           .default_value  = default_value,
           .auto_increment = is_auto_increment,
