@@ -1,11 +1,13 @@
 #include "DiffQL/Connectors/MariaDB/Connector.hpp"
-#include "SQLParser.h"
-#include "SQLParserResult.h"
-#include "sql/SQLStatement.h"
-#include "sql/SelectStatement.h"
+#include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
+#include "DiffQL/Parser/DDLVisitor.hpp"
+#include "MariaDBDDLLexer.h"
+#include "MariaDBDDLParser.h"
+#include <antlr4-runtime.h>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 MariaDBConnector::MariaDBConnector(MariaDBConn conn_object)
@@ -15,8 +17,58 @@ MariaDBConnector::~MariaDBConnector() {}
 
 std::vector<Table> MariaDBConnector::get_schema()
 {
-  parse(dump());
-  return std::vector<Table>();
+  auto tables = parse(dump());
+
+  // Dump of the parsing job, TODO(): To remove.
+  std::cout << "Parsing Done !" << std::endl;
+  std::cout << "Tables: " << tables.size() << std::endl;
+
+  for(const auto &table : tables) {
+    std::cout << "\n" << table.name << ":\n";
+    std::cout << "  Columns: ";
+    for(const auto &col : table.columns) {
+      std::cout << col.name;
+      if(col.auto_increment) {
+        std::cout << "(AI)";
+      }
+      std::cout << ", ";
+    }
+
+    if(table.primary_key) {
+      std::cout << "\n  PK: ";
+      for(const auto &pk_col : table.primary_key->column_names) {
+        std::cout << pk_col << " ";
+      }
+    }
+
+    if(!table.foreign_keys.empty()) {
+      std::cout << "\n  Foreign Keys:";
+      for(const auto &fk : table.foreign_keys) {
+        std::cout << "\n    " << fk.name << " references "
+                  << fk.referenced_table << " (";
+        for(const auto &ref_col : fk.referenced_columns) {
+          std::cout << ref_col << " ";
+        }
+        std::cout << ")";
+      }
+    }
+
+    if(!table.indexes.empty()) {
+      std::cout << "\n  Indexes:";
+      for(const auto &idx : table.indexes) {
+        std::cout << "\n    " << idx.name << (idx.unique ? " (UNIQUE)" : "")
+                  << " [";
+        for(const auto &ic : idx.column_names) {
+          std::cout << ic << " ";
+        }
+        std::cout << "]";
+      }
+    }
+
+    std::cout << std::endl;
+  }
+
+  return tables;
 }
 
 std::ifstream MariaDBConnector::dump()
@@ -36,50 +88,27 @@ std::ifstream MariaDBConnector::dump()
   return file;
 }
 
-void MariaDBConnector::parse(std::ifstream file)
+std::vector<Table> MariaDBConnector::parse(const std::ifstream& file)
 {
+  // Read entire file into string
+  std::ostringstream ss;
+  ss << file.rdbuf();
+  std::string sql = ss.str();
 
-  std::string line;
-  std::string current_statement;
-  bool        in_statement;
+  // ANTLR pipeline: input -> lexer -> tokens -> parser -> tree
+  antlr4::ANTLRInputStream  input(sql);
+  MariaDBDDLLexer           lexer(&input);
+  antlr4::CommonTokenStream tokens(&lexer);
+  MariaDBDDLParser          parser(&tokens);
 
-  while(std::getline(file, line)) {
-    if(!line.starts_with("/*")) // We found a statement
-    {
-      if(!in_statement)
-        in_statement = true;
+  // Suppress default error output for graceful skipping
+  parser.removeErrorListeners();
 
-      // Attention: We remove backquotes '`' because they aren't supported by
-      // the hyrise lib to interpret.
-      // This is an arbitrary choice due to time constraints, if there is an
-      // update feel free to remove the following code section that trims them.
-      for(size_t i = 0; i < line.size(); i++) {
-        if(line.at(i) == '`') {
-          line.at(i) = '\'';
-        }
-      }
-      // END
+  auto *tree = parser.script();
 
-      current_statement += line;
-    } else if(in_statement) { // We finished traversal of a statement
-      in_statement = false;
+  // Visit the parse tree
+  DDLVisitor visitor;
+  visitor.visit(tree);
 
-      hsql::SQLParserResult result;
-      hsql::SQLParser::parse(current_statement, &result);
-      if(result.isValid() && result.size() > 0) {
-        const hsql::SQLStatement *statement = result.getStatement(0);
-
-        if(statement->isType(hsql::kStmtSelect)) {
-          const auto *select =
-              static_cast<const hsql::SelectStatement *>(statement);
-
-          (void)select;
-        }
-      }
-
-      std::cout << "STMT: " << current_statement << std::endl;
-
-      current_statement.clear();
-    }
-  }
+  return visitor.tables();
 }

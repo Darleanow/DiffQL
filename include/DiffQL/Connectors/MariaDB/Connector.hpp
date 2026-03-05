@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
 #include "DiffQL/Connectors/BaseConnector.hpp"
 #include <mariadb/mysql.h>
 #include <vector>
@@ -23,9 +24,9 @@ public:
   std::vector<Table> get_schema() final;
 
 private:
-  MariaDBConn   m_conn_object;
+  MariaDBConn              m_conn_object;
 
-  std::ifstream dump();
+  std::ifstream            dump();
 
-  void          parse(std::ifstream file);
+  std::vector<Table>       parse(std::ifstream file);
 };
