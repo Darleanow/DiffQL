@@ -1,5 +1,6 @@
 #include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
 #include "DiffQL/DiffEngine/DiffEngine.hpp"
+#include <algorithm>
 
 DiffEngine::DiffEngine(
     const std::vector<Table> &schema_origin,
@@ -24,6 +25,70 @@ const SchemaDiff &DiffEngine::compare_schemas()
 }
 
 void DiffEngine::generate_report(const SchemaDiff &schema) const {}
+
+float DiffEngine::jaro_winkler(const std::string &s1, const std::string &s2) const
+{
+  if(s1 == s2)
+    return 1.0f;
+
+  const int len1 = static_cast<int>(s1.size());
+  const int len2 = static_cast<int>(s2.size());
+
+  if(len1 == 0 || len2 == 0)
+    return 0.0f;
+
+  const int match_window = std::max(0, std::max(len1, len2) / 2 - 1);
+
+  std::vector<bool> s1_matched(len1, false);
+  std::vector<bool> s2_matched(len2, false);
+
+  int matches = 0;
+
+  for(int i = 0; i < len1; ++i) {
+    const int start = std::max(0, i - match_window);
+    const int end   = std::min(len2 - 1, i + match_window);
+
+    for(int j = start; j <= end; ++j) {
+      if(s2_matched[j] || s1[i] != s2[j])
+        continue;
+      s1_matched[i] = true;
+      s2_matched[j] = true;
+      ++matches;
+      break;
+    }
+  }
+
+  if(matches == 0)
+    return 0.0f;
+
+  // Count mismatched pairs among matched chars; t = half that count
+  int transpositions = 0;
+  int k              = 0;
+  for(int i = 0; i < len1; ++i) {
+    if(!s1_matched[i])
+      continue;
+    while(!s2_matched[k])
+      ++k;
+    if(s1[i] != s2[k])
+      ++transpositions;
+    ++k;
+  }
+
+  const float m    = static_cast<float>(matches);
+  const float jaro = (m / len1 + m / len2 + (m - transpositions / 2.0f) / m) / 3.0f;
+
+  // Winkler prefix bonus (up to 4 chars)
+  int       prefix       = 0;
+  const int prefix_limit = std::min({len1, len2, 4});
+  for(int i = 0; i < prefix_limit; ++i) {
+    if(s1[i] == s2[i])
+      ++prefix;
+    else
+      break;
+  }
+
+  return jaro + prefix * 0.1f * (1.0f - jaro);
+}
 
 std::optional<TableDiff> DiffEngine::compare_table_by_fields(
     const Table &table_origin, const Table &table_dest

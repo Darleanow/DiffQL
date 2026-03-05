@@ -100,6 +100,7 @@ enable_testing()
 
 add_executable(DiffQL_Tests
     tests/DiffEngineTests.cpp
+    src/DiffEngine/DiffEngine.cpp
 )
 
 target_include_directories(DiffQL_Tests

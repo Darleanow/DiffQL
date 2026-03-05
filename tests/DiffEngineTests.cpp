@@ -1,64 +1,76 @@
 #include "DiffQL/DiffEngine/DiffEngine.hpp"
 #include <gtest/gtest.h>
 
-using DiffQL::jaro_winkler;
-
-TEST(JaroWinkler, BothEmpty)
+// Exposes protected members for unit testing
+class DiffEngineTest : public DiffEngine
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("", ""), 1.0f);
+public:
+  DiffEngineTest() : DiffEngine({}, {}) {}
+
+  using DiffEngine::jaro_winkler;
+};
+
+class JaroWinkler : public ::testing::Test
+{
+protected:
+  DiffEngineTest engine;
+};
+
+TEST_F(JaroWinkler, BothEmpty)
+{
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("", ""), 1.0f);
 }
 
-TEST(JaroWinkler, OriginEmpty)
+TEST_F(JaroWinkler, OriginEmpty)
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("", "abc"), 0.0f);
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("", "abc"), 0.0f);
 }
 
-TEST(JaroWinkler, DestEmpty)
+TEST_F(JaroWinkler, DestEmpty)
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("abc", ""), 0.0f);
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("abc", ""), 0.0f);
 }
 
-TEST(JaroWinkler, IdenticalStrings)
+TEST_F(JaroWinkler, IdenticalStrings)
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("hello", "hello"), 1.0f);
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("hello", "hello"), 1.0f);
 }
 
-TEST(JaroWinkler, CompletelyDifferent)
+TEST_F(JaroWinkler, CompletelyDifferent)
 {
-  // No characters match within the window → score is 0
-  EXPECT_FLOAT_EQ(jaro_winkler("abc", "xyz"), 0.0f);
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("abc", "xyz"), 0.0f);
 }
 
-TEST(JaroWinkler, Symmetry)
+TEST_F(JaroWinkler, Symmetry)
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("kitten", "sitting"), jaro_winkler("sitting", "kitten"));
+  EXPECT_FLOAT_EQ(
+      engine.jaro_winkler("kitten", "sitting"),
+      engine.jaro_winkler("sitting", "kitten")
+  );
 }
 
 // Classic Jaro-Winkler reference: MARTHA/MARHTA → ~0.9611
-TEST(JaroWinkler, ClassicMarthaMarhta)
+TEST_F(JaroWinkler, ClassicMarthaMarhta)
 {
-  EXPECT_NEAR(jaro_winkler("MARTHA", "MARHTA"), 0.9611f, 0.001f);
+  EXPECT_NEAR(engine.jaro_winkler("MARTHA", "MARHTA"), 0.9611f, 0.001f);
 }
 
-TEST(JaroWinkler, SqlColumnNamesMissingSeparator)
+TEST_F(JaroWinkler, SqlColumnNamesMissingSeparator)
 {
-  // user_id vs userid: one char difference, long common prefix → very high similarity
-  EXPECT_GT(jaro_winkler("user_id", "userid"), 0.95f);
+  EXPECT_GT(engine.jaro_winkler("user_id", "userid"), 0.95f);
 }
 
-TEST(JaroWinkler, SqlColumnNamesIdentical)
+TEST_F(JaroWinkler, SqlColumnNamesIdentical)
 {
-  EXPECT_FLOAT_EQ(jaro_winkler("created_at", "created_at"), 1.0f);
+  EXPECT_FLOAT_EQ(engine.jaro_winkler("created_at", "created_at"), 1.0f);
 }
 
-TEST(JaroWinkler, SqlColumnNamesSimilar)
+TEST_F(JaroWinkler, SqlColumnNamesSimilar)
 {
-  // first_name vs firstname: similar structure
-  EXPECT_GT(jaro_winkler("first_name", "firstname"), 0.95f);
+  EXPECT_GT(engine.jaro_winkler("first_name", "firstname"), 0.95f);
 }
 
-TEST(JaroWinkler, SqlColumnNamesUnrelated)
+TEST_F(JaroWinkler, SqlColumnNamesUnrelated)
 {
-  // completely unrelated column names → low similarity
-  EXPECT_LT(jaro_winkler("user_id", "invoice_date"), 0.6f);
+  EXPECT_LT(engine.jaro_winkler("user_id", "invoice_date"), 0.6f);
 }
