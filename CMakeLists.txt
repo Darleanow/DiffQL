@@ -53,7 +53,7 @@ if(MARIADB_FOUND AND TARGET sqlparser)
 endif()
 
 add_executable(PostgreSQLParserTest
-    src/postgresql_parser_test_main.cpp
+    src/tests/postgresql_parser_test_main.cpp
     src/Connectors/PostGreSQL/Connector.cpp
 )
 
@@ -63,3 +63,16 @@ target_include_directories(PostgreSQLParserTest
 )
 
 target_compile_options(PostgreSQLParserTest PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(PostgreSQLSchemaDiffTest
+    src/tests/postgresql_schema_diff_test_main.cpp
+    src/Connectors/PostGreSQL/Connector.cpp
+    src/Diff/SchemaDiff.cpp
+)
+
+target_include_directories(PostgreSQLSchemaDiffTest
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_compile_options(PostgreSQLSchemaDiffTest PRIVATE -Wall -Wextra -Wpedantic)

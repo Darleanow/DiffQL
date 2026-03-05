@@ -16,246 +16,9 @@
 #include <vector>
 
 namespace {
-constexpr char FIELD_SEP = 0x1f;
+constexpr char        FIELD_SEPARATOR = 0x1f;
 
-std::string trim(const std::string &s)
-{
-  size_t a = 0;
-  size_t b = s.size();
-  while(a < b && std::isspace(static_cast<unsigned char>(s[a])) != 0) ++a;
-  while(b > a && std::isspace(static_cast<unsigned char>(s[b - 1])) != 0) --b;
-  return s.substr(a, b - a);
-}
-
-std::string lower(std::string s)
-{
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return s;
-}
-
-std::string upper(std::string s)
-{
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-    return static_cast<char>(std::toupper(c));
-  });
-  return s;
-}
-
-std::vector<std::string> split(const std::string &s, char sep)
-{
-  std::vector<std::string> out;
-  size_t start = 0;
-  for(size_t i = 0; i < s.size(); ++i) {
-    if(s[i] == sep) {
-      out.emplace_back(s.substr(start, i - start));
-      start = i + 1;
-    }
-  }
-  out.emplace_back(s.substr(start));
-  return out;
-}
-
-bool starts_with_ci(const std::string &s, const std::string &prefix)
-{
-  if(prefix.size() > s.size()) return false;
-  for(size_t i = 0; i < prefix.size(); ++i) {
-    if(std::tolower(static_cast<unsigned char>(s[i])) !=
-       std::tolower(static_cast<unsigned char>(prefix[i]))) return false;
-  }
-  return true;
-}
-
-std::string sanitize_dump_sql(const std::string &dump_sql)
-{
-  std::string out;
-  for(const std::string &line : split(dump_sql, '\n')) {
-    std::string l = trim(line);
-    if(starts_with_ci(l, "SET transaction_timeout")) continue;
-    out += line;
-    out.push_back('\n');
-  }
-  return out;
-}
-
-std::string shell_quote(const std::string &s)
-{
-  std::string out;
-  out.reserve(s.size() + 2);
-  out.push_back('\'');
-  for(char c : s) {
-    if(c == '\'') out += "'\\''";
-    else out.push_back(c);
-  }
-  out.push_back('\'');
-  return out;
-}
-
-int normalize_status(int status)
-{
-  if(status == -1) return -1;
-  if(WIFEXITED(status)) return WEXITSTATUS(status);
-  if(WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-  return status;
-}
-
-std::string env_or_default(const char *name, const std::string &fallback)
-{
-  const char *value = std::getenv(name);
-  if(value == nullptr || std::string(value).empty()) return fallback;
-  return std::string(value);
-}
-
-std::string action_from_code(const std::string &code)
-{
-  if(code == "a") return "NO ACTION";
-  if(code == "r") return "RESTRICT";
-  if(code == "c") return "CASCADE";
-  if(code == "n") return "SET NULL";
-  if(code == "d") return "SET DEFAULT";
-  return "NO ACTION";
-}
-
-std::string make_db_identifier()
-{
-  auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                 std::chrono::system_clock::now().time_since_epoch())
-                 .count();
-  return "diffql_tmp_" + std::to_string(now);
-}
-
-std::filesystem::path make_tmp_file(const std::string &prefix)
-{
-  auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                 std::chrono::system_clock::now().time_since_epoch())
-                 .count();
-  return std::filesystem::temp_directory_path() /
-         (prefix + std::to_string(now) + ".sql");
-}
-
-std::string conn_prefix(const PostgreSQLConn &conn)
-{
-  std::string prefix;
-  if(!conn.passwd.empty()) prefix += "PGPASSWORD=" + shell_quote(conn.passwd) + " ";
-  return prefix;
-}
-
-std::string conn_opts(const PostgreSQLConn &conn)
-{
-  std::string host = conn.host.empty() ? "localhost" : conn.host;
-  std::string port = conn.port.empty() ? "5432" : conn.port;
-  return " -h " + shell_quote(host) + " -p " + shell_quote(port) +
-         " -U " + shell_quote(conn.user);
-}
-
-int run_status_inner(const std::string &inner)
-{
-  std::string cmd = "bash -lc " + shell_quote(inner);
-  return normalize_status(std::system(cmd.c_str()));
-}
-
-std::pair<int, std::string> run_capture_inner(const std::string &inner)
-{
-  std::string cmd = "bash -lc " + shell_quote(inner);
-  FILE *pipe = popen(cmd.c_str(), "r");
-  if(pipe == nullptr) throw std::runtime_error("failed to run command");
-
-  std::string output;
-  char        buf[4096];
-  while(fgets(buf, static_cast<int>(sizeof(buf)), pipe) != nullptr) {
-    output += buf;
-  }
-
-  int status = normalize_status(pclose(pipe));
-  return {status, output};
-}
-
-std::vector<std::vector<std::string>> query_rows(const PostgreSQLConn &conn,
-                                                 const std::string &db,
-                                                 const std::string &sql)
-{
-  std::filesystem::path sql_file = make_tmp_file("diffql_query_");
-  {
-    std::ofstream out(sql_file);
-    if(!out.is_open()) throw std::runtime_error("unable to create query file");
-    out << sql;
-  }
-
-  std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
-  std::string inner = conn_prefix(conn) + shell_quote(psql_bin) +
-                      " -X -A -t -F $'\\x1f'" +
-                      conn_opts(conn) +
-                      " -d " + shell_quote(db) +
-                      " -f " + shell_quote(sql_file.string());
-
-  auto [status, output] = run_capture_inner(inner);
-  std::error_code ec;
-  std::filesystem::remove(sql_file, ec);
-
-  if(status != 0) throw std::runtime_error("psql query failed");
-
-  std::vector<std::vector<std::string>> rows;
-  for(const std::string &line_raw : split(output, '\n')) {
-    std::string line = trim(line_raw);
-    if(line.empty()) continue;
-    rows.emplace_back(split(line, FIELD_SEP));
-  }
-
-  return rows;
-}
-
-CanonicalType map_type(const std::string &raw)
-{
-  std::string t = lower(trim(raw));
-  auto one_number = [&](int &n) -> bool {
-    size_t o = t.find('(');
-    size_t c = t.find(')', o == std::string::npos ? 0 : o + 1);
-    if(o == std::string::npos || c == std::string::npos || c <= o + 1) return false;
-    try {
-      n = std::stoi(trim(t.substr(o + 1, c - o - 1)));
-      return true;
-    } catch(...) {
-      return false;
-    }
-  };
-
-  if(t == "smallint" || t == "int2") return {CanonicalType::SMALLINT, {}, {}, {}, raw};
-  if(t == "bigint" || t == "int8") return {CanonicalType::BIGINT, {}, {}, {}, raw};
-  if(t == "integer" || t == "int" || t == "int4") return {CanonicalType::INTEGER, {}, {}, {}, raw};
-  if(t.find("character varying") == 0 || t.find("varchar") == 0) {
-    int n = 0;
-    if(one_number(n)) return {CanonicalType::VARCHAR, n, {}, {}, raw};
-    return {CanonicalType::VARCHAR, {}, {}, {}, raw};
-  }
-  if(t.find("character") == 0 || t.find("char") == 0) {
-    int n = 0;
-    if(one_number(n)) return {CanonicalType::CHAR, n, {}, {}, raw};
-    return {CanonicalType::CHAR, {}, {}, {}, raw};
-  }
-  if(t == "text") return {CanonicalType::TEXT, {}, {}, {}, raw};
-  if(t.find("numeric") == 0 || t.find("decimal") == 0) return {CanonicalType::DECIMAL, {}, {}, {}, raw};
-  if(t == "real" || t == "float4") return {CanonicalType::FLOAT, {}, {}, {}, raw};
-  if(t == "double precision" || t == "float8") return {CanonicalType::DOUBLE, {}, {}, {}, raw};
-  if(t == "date") return {CanonicalType::DATE, {}, {}, {}, raw};
-  if(t.find("timestamp") == 0 || t == "timestamptz") return {CanonicalType::TIMESTAMP, {}, {}, {}, raw};
-  if(t == "boolean" || t == "bool") return {CanonicalType::BOOLEAN, {}, {}, {}, raw};
-  if(t == "bytea") return {CanonicalType::BLOB, {}, {}, {}, raw};
-  if(t == "json" || t == "jsonb") return {CanonicalType::JSON, {}, {}, {}, raw};
-  return {CanonicalType::TEXT, {}, {}, {}, raw};
-}
-
-std::string table_key(const std::string &schema, const std::string &table)
-{
-  return lower(schema) + "." + lower(table);
-}
-
-std::vector<Table> introspect_schema(const PostgreSQLConn &conn, const std::string &db)
-{
-  std::vector<Table> tables;
-  std::unordered_map<std::string, size_t> index;
-
-  const std::string q_tables = R"SQL(
+constexpr const char *QUERY_TABLES = R"SQL(
 SELECT n.nspname, c.relname
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -264,14 +27,7 @@ WHERE c.relkind IN ('r','p')
 ORDER BY n.nspname, c.relname;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_tables)) {
-    if(row.size() < 2) continue;
-    Table t{.name = row[1], .schema = row[0], .columns = {}, .primary_key = std::nullopt, .foreign_keys = {}, .indexes = {}, .checks = {}};
-    index[table_key(t.schema, t.name)] = tables.size();
-    tables.push_back(std::move(t));
-  }
-
-  const std::string q_columns = R"SQL(
+constexpr const char *QUERY_COLUMNS = R"SQL(
 SELECT n.nspname,
        c.relname,
        a.attnum::text,
@@ -290,34 +46,7 @@ WHERE c.relkind IN ('r','p')
 ORDER BY n.nspname, c.relname, a.attnum;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_columns)) {
-    if(row.size() < 7) continue;
-    auto it = index.find(table_key(row[0], row[1]));
-    if(it == index.end()) continue;
-
-    int position = 0;
-    try {
-      position = std::stoi(row[2]);
-    } catch(...) {
-      continue;
-    }
-
-    std::optional<std::string> def;
-    if(!row[6].empty()) def = row[6];
-
-    bool auto_inc = def.has_value() && lower(*def).find("nextval(") != std::string::npos;
-
-    tables[it->second].columns.push_back(Column{
-        .name = row[3],
-        .type = map_type(row[4]),
-        .nullable = (row[5] == "true"),
-        .default_value = def,
-        .auto_increment = auto_inc,
-        .position = position,
-        .source_dbms = "postgresql"});
-  }
-
-  const std::string q_pk = R"SQL(
+constexpr const char *QUERY_PRIMARY_KEYS = R"SQL(
 SELECT n.nspname,
        c.relname,
        con.conname,
@@ -333,23 +62,7 @@ WHERE con.contype = 'p'
 ORDER BY n.nspname, c.relname, ord.idx;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_pk)) {
-    if(row.size() < 5) continue;
-    auto it = index.find(table_key(row[0], row[1]));
-    if(it == index.end()) continue;
-
-    Table &t = tables[it->second];
-    if(!t.primary_key.has_value()) {
-      t.primary_key = PrimaryKey{.column_names = {}, .constraint_name = row[2]};
-    }
-    t.primary_key->column_names.push_back(row[3]);
-
-    for(Column &c : t.columns) {
-      if(lower(c.name) == lower(row[3])) c.nullable = false;
-    }
-  }
-
-  const std::string q_fk = R"SQL(
+constexpr const char *QUERY_FOREIGN_KEYS = R"SQL(
 SELECT n.nspname,
        c.relname,
        con.conname,
@@ -373,36 +86,7 @@ WHERE con.contype = 'f'
 ORDER BY n.nspname, c.relname, con.conname, ord.idx;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_fk)) {
-    if(row.size() < 10) continue;
-    auto it = index.find(table_key(row[0], row[1]));
-    if(it == index.end()) continue;
-
-    Table &t = tables[it->second];
-    size_t fk_idx = t.foreign_keys.size();
-    for(size_t i = 0; i < t.foreign_keys.size(); ++i) {
-      if(t.foreign_keys[i].name == row[2]) {
-        fk_idx = i;
-        break;
-      }
-    }
-
-    if(fk_idx == t.foreign_keys.size()) {
-      std::string ref_table = row[3] == "public" ? row[4] : row[3] + "." + row[4];
-      t.foreign_keys.push_back(ForeignKey{
-          .name = row[2],
-          .column_names = {},
-          .referenced_table = ref_table,
-          .referenced_columns = {},
-          .on_delete = action_from_code(row[8]),
-          .on_update = action_from_code(row[9])});
-    }
-
-    t.foreign_keys[fk_idx].column_names.push_back(row[5]);
-    t.foreign_keys[fk_idx].referenced_columns.push_back(row[6]);
-  }
-
-  const std::string q_indexes = R"SQL(
+constexpr const char *QUERY_INDEXES = R"SQL(
 SELECT n.nspname,
        c.relname,
        ic.relname,
@@ -423,22 +107,7 @@ GROUP BY n.nspname, c.relname, ic.relname, ix.indisunique, am.amname
 ORDER BY n.nspname, c.relname, ic.relname;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_indexes)) {
-    if(row.size() < 6) continue;
-    auto it = index.find(table_key(row[0], row[1]));
-    if(it == index.end()) continue;
-
-    std::vector<std::string> cols;
-    if(!row[5].empty()) cols = split(row[5], ',');
-
-    tables[it->second].indexes.push_back(Index{
-        .name = row[2],
-        .column_names = cols,
-        .unique = (row[3] == "true"),
-        .type = upper(row[4])});
-  }
-
-  const std::string q_checks = R"SQL(
+constexpr const char *QUERY_CHECKS = R"SQL(
 SELECT n.nspname,
        c.relname,
        con.conname,
@@ -451,18 +120,45 @@ WHERE con.contype = 'c'
 ORDER BY n.nspname, c.relname, con.conname;
 )SQL";
 
-  for(const auto &row : query_rows(conn, db, q_checks)) {
-    if(row.size() < 4) continue;
-    auto it = index.find(table_key(row[0], row[1]));
-    if(it == index.end()) continue;
+struct CatalogState
+{
+  std::vector<Table>                      tables;
+  std::unordered_map<std::string, size_t> table_index;
+};
 
-    tables[it->second].checks.push_back(CheckConstraint{
-        .name = row[2],
-        .expression = row[3]});
+struct TemporaryFile
+{
+  std::filesystem::path path;
+
+  explicit TemporaryFile(std::filesystem::path p) : path(std::move(p)) {}
+
+  ~TemporaryFile()
+  {
+    if(path.empty())
+      return;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
   }
 
-  return tables;
-}
+  TemporaryFile(const TemporaryFile &)            = delete;
+  TemporaryFile &operator=(const TemporaryFile &) = delete;
+
+  TemporaryFile(TemporaryFile &&other) noexcept : path(std::move(other.path))
+  {
+    other.path.clear();
+  }
+
+  TemporaryFile &operator=(TemporaryFile &&other) noexcept
+  {
+    if(this == &other)
+      return *this;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    path = std::move(other.path);
+    other.path.clear();
+    return *this;
+  }
+};
 
 struct TempDbGuard
 {
@@ -470,18 +166,532 @@ struct TempDbGuard
   std::string    dbname;
   bool           enabled = true;
 
-  ~TempDbGuard()
-  {
-    if(!enabled) return;
-    std::string dropdb_bin = env_or_default("DIFFQL_DROPDB_BIN", "dropdb");
-    std::string inner = conn_prefix(conn) + shell_quote(dropdb_bin) +
-                        conn_opts(conn) +
-                        " --if-exists " + shell_quote(dbname);
-    run_status_inner(inner);
-  }
+  ~TempDbGuard();
 };
 
-} 
+std::string trim(const std::string &value)
+{
+  size_t begin = 0;
+  size_t end   = value.size();
+
+  while(begin < end &&
+        std::isspace(static_cast<unsigned char>(value[begin])) != 0)
+    ++begin;
+  while(end > begin &&
+        std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+    --end;
+
+  return value.substr(begin, end - begin);
+}
+
+std::string to_lower(std::string value)
+{
+  std::transform(
+      value.begin(), value.end(), value.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
+  );
+  return value;
+}
+
+std::string to_upper(std::string value)
+{
+  std::transform(
+      value.begin(), value.end(), value.begin(),
+      [](unsigned char c) { return static_cast<char>(std::toupper(c)); }
+  );
+  return value;
+}
+
+bool iequals(const std::string &a, const std::string &b)
+{
+  return to_lower(a) == to_lower(b);
+}
+
+std::vector<std::string> split(const std::string &value, char sep)
+{
+  std::vector<std::string> out;
+  size_t                   start = 0;
+
+  for(size_t i = 0; i < value.size(); ++i) {
+    if(value[i] != sep)
+      continue;
+    out.emplace_back(value.substr(start, i - start));
+    start = i + 1;
+  }
+
+  out.emplace_back(value.substr(start));
+  return out;
+}
+
+bool starts_with_case_insensitive(
+    const std::string &value, const std::string &prefix
+)
+{
+  if(prefix.size() > value.size())
+    return false;
+
+  for(size_t i = 0; i < prefix.size(); ++i) {
+    if(std::tolower(static_cast<unsigned char>(value[i])) !=
+       std::tolower(static_cast<unsigned char>(prefix[i]))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+std::string sanitize_dump_sql(const std::string &dump_sql)
+{
+  std::string sanitized;
+
+  for(const std::string &line : split(dump_sql, '\n')) {
+    const std::string trimmed_line = trim(line);
+    if(starts_with_case_insensitive(trimmed_line, "SET transaction_timeout"))
+      continue;
+    sanitized += line;
+    sanitized.push_back('\n');
+  }
+
+  return sanitized;
+}
+
+std::string shell_quote(const std::string &value)
+{
+  std::string out;
+  out.reserve(value.size() + 2);
+  out.push_back('\'');
+
+  for(char c : value) {
+    if(c == '\'') {
+      out += "'\\''";
+    } else {
+      out.push_back(c);
+    }
+  }
+
+  out.push_back('\'');
+  return out;
+}
+
+int normalize_status(int status)
+{
+  if(status == -1)
+    return -1;
+  if(WIFEXITED(status))
+    return WEXITSTATUS(status);
+  if(WIFSIGNALED(status))
+    return 128 + WTERMSIG(status);
+  return status;
+}
+
+std::string env_or_default(const char *name, const std::string &fallback)
+{
+  const char *value = std::getenv(name);
+  if(value == nullptr || std::string(value).empty())
+    return fallback;
+  return std::string(value);
+}
+
+std::string connection_env_prefix(const PostgreSQLConn &conn)
+{
+  if(conn.passwd.empty())
+    return {};
+  return "PGPASSWORD=" + shell_quote(conn.passwd) + " ";
+}
+
+std::string connection_cli_options(const PostgreSQLConn &conn)
+{
+  const std::string host = conn.host.empty() ? "localhost" : conn.host;
+  const std::string port = conn.port.empty() ? "5432" : conn.port;
+
+  return " -h " + shell_quote(host) + " -p " + shell_quote(port) + " -U " +
+         shell_quote(conn.user);
+}
+
+int run_status_command(const std::string &inner_command)
+{
+  const std::string command = "bash -lc " + shell_quote(inner_command);
+  return normalize_status(std::system(command.c_str()));
+}
+
+std::pair<int, std::string> run_capture_command(const std::string &inner_command
+)
+{
+  const std::string command = "bash -lc " + shell_quote(inner_command);
+  FILE             *pipe    = popen(command.c_str(), "r");
+  if(pipe == nullptr)
+    throw std::runtime_error("failed to run command");
+
+  std::string output;
+  char        buffer[4096];
+  while(fgets(buffer, static_cast<int>(sizeof(buffer)), pipe) != nullptr) {
+    output += buffer;
+  }
+
+  const int status = normalize_status(pclose(pipe));
+  return {status, output};
+}
+
+std::filesystem::path make_temp_sql_file(const std::string &prefix)
+{
+  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch()
+  )
+                          .count();
+
+  return std::filesystem::temp_directory_path() /
+         (prefix + std::to_string(now_ms) + ".sql");
+}
+
+std::string make_temp_database_name()
+{
+  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch()
+  )
+                          .count();
+
+  return "diffql_tmp_" + std::to_string(now_ms);
+}
+
+std::optional<int> to_int(const std::string &value)
+{
+  try {
+    return std::stoi(value);
+  } catch(...) {
+    return std::nullopt;
+  }
+}
+
+std::string action_from_code(const std::string &code)
+{
+  if(code == "a")
+    return "NO ACTION";
+  if(code == "r")
+    return "RESTRICT";
+  if(code == "c")
+    return "CASCADE";
+  if(code == "n")
+    return "SET NULL";
+  if(code == "d")
+    return "SET DEFAULT";
+  return "NO ACTION";
+}
+
+CanonicalType map_type(const std::string &raw)
+{
+  const std::string normalized = to_lower(trim(raw));
+
+  auto              parse_length = [&](int &value) -> bool {
+    const size_t open = normalized.find('(');
+    const size_t close =
+        normalized.find(')', open == std::string::npos ? 0 : open + 1);
+    if(open == std::string::npos || close == std::string::npos ||
+       close <= open + 1)
+      return false;
+
+    const std::optional<int> parsed =
+        to_int(trim(normalized.substr(open + 1, close - open - 1)));
+    if(!parsed.has_value())
+      return false;
+    value = *parsed;
+    return true;
+  };
+
+  if(normalized == "smallint" || normalized == "int2")
+    return {CanonicalType::SMALLINT, {}, {}, {}, raw};
+  if(normalized == "bigint" || normalized == "int8")
+    return {CanonicalType::BIGINT, {}, {}, {}, raw};
+  if(normalized == "integer" || normalized == "int" || normalized == "int4")
+    return {CanonicalType::INTEGER, {}, {}, {}, raw};
+
+  if(normalized.find("character varying") == 0 ||
+     normalized.find("varchar") == 0) {
+    int length = 0;
+    if(parse_length(length))
+      return {CanonicalType::VARCHAR, length, {}, {}, raw};
+    return {CanonicalType::VARCHAR, {}, {}, {}, raw};
+  }
+
+  if(normalized.find("character") == 0 || normalized.find("char") == 0) {
+    int length = 0;
+    if(parse_length(length))
+      return {CanonicalType::CHAR, length, {}, {}, raw};
+    return {CanonicalType::CHAR, {}, {}, {}, raw};
+  }
+
+  if(normalized == "text")
+    return {CanonicalType::TEXT, {}, {}, {}, raw};
+  if(normalized.find("numeric") == 0 || normalized.find("decimal") == 0)
+    return {CanonicalType::DECIMAL, {}, {}, {}, raw};
+  if(normalized == "real" || normalized == "float4")
+    return {CanonicalType::FLOAT, {}, {}, {}, raw};
+  if(normalized == "double precision" || normalized == "float8")
+    return {CanonicalType::DOUBLE, {}, {}, {}, raw};
+  if(normalized == "date")
+    return {CanonicalType::DATE, {}, {}, {}, raw};
+  if(normalized.find("timestamp") == 0 || normalized == "timestamptz")
+    return {CanonicalType::TIMESTAMP, {}, {}, {}, raw};
+  if(normalized == "boolean" || normalized == "bool")
+    return {CanonicalType::BOOLEAN, {}, {}, {}, raw};
+  if(normalized == "bytea")
+    return {CanonicalType::BLOB, {}, {}, {}, raw};
+  if(normalized == "json" || normalized == "jsonb")
+    return {CanonicalType::JSON, {}, {}, {}, raw};
+
+  return {CanonicalType::TEXT, {}, {}, {}, raw};
+}
+
+std::string table_key(const std::string &schema, const std::string &table)
+{
+  return to_lower(schema) + "." + to_lower(table);
+}
+
+Table *find_table(
+    CatalogState &catalog, const std::string &schema, const std::string &table
+)
+{
+  const auto it = catalog.table_index.find(table_key(schema, table));
+  if(it == catalog.table_index.end())
+    return nullptr;
+  return &catalog.tables[it->second];
+}
+
+std::vector<std::vector<std::string>> query_rows(
+    const PostgreSQLConn &conn, const std::string &db, const std::string &sql
+)
+{
+  TemporaryFile query_file(make_temp_sql_file("diffql_query_"));
+
+  {
+    std::ofstream out(query_file.path);
+    if(!out.is_open())
+      throw std::runtime_error("unable to create query file");
+    out << sql;
+  }
+
+  const std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
+  const std::string command =
+      connection_env_prefix(conn) + shell_quote(psql_bin) +
+      " -X -A -t -F $'\\x1f'" + connection_cli_options(conn) + " -d " +
+      shell_quote(db) + " -f " + shell_quote(query_file.path.string());
+
+  const auto [status, output] = run_capture_command(command);
+  if(status != 0)
+    throw std::runtime_error("psql query failed");
+
+  std::vector<std::vector<std::string>> rows;
+  for(const std::string &raw_line : split(output, '\n')) {
+    const std::string line = trim(raw_line);
+    if(line.empty())
+      continue;
+    rows.push_back(split(line, FIELD_SEPARATOR));
+  }
+
+  return rows;
+}
+
+void load_tables(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_TABLES)) {
+    if(row.size() < 2)
+      continue;
+
+    Table table {
+        .name         = row[1],
+        .schema       = row[0],
+        .columns      = {},
+        .primary_key  = std::nullopt,
+        .foreign_keys = {},
+        .indexes      = {},
+        .checks       = {}
+    };
+
+    catalog.table_index[table_key(table.schema, table.name)] =
+        catalog.tables.size();
+    catalog.tables.push_back(std::move(table));
+  }
+}
+
+void load_columns(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_COLUMNS)) {
+    if(row.size() < 7)
+      continue;
+
+    Table *table = find_table(catalog, row[0], row[1]);
+    if(table == nullptr)
+      continue;
+
+    const std::optional<int> position = to_int(row[2]);
+    if(!position.has_value())
+      continue;
+
+    std::optional<std::string> default_value;
+    if(!row[6].empty())
+      default_value = row[6];
+
+    const bool is_auto_increment =
+        default_value.has_value() &&
+        to_lower(*default_value).find("nextval(") != std::string::npos;
+
+    table->columns.push_back(Column {
+        .name           = row[3],
+        .type           = map_type(row[4]),
+        .nullable       = (row[5] == "true"),
+        .default_value  = default_value,
+        .auto_increment = is_auto_increment,
+        .position       = *position,
+        .source_dbms    = "postgresql"
+    });
+  }
+}
+
+void load_primary_keys(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_PRIMARY_KEYS)) {
+    if(row.size() < 5)
+      continue;
+
+    Table *table = find_table(catalog, row[0], row[1]);
+    if(table == nullptr)
+      continue;
+
+    if(!table->primary_key.has_value()) {
+      table->primary_key =
+          PrimaryKey {.column_names = {}, .constraint_name = row[2]};
+    }
+
+    table->primary_key->column_names.push_back(row[3]);
+
+    for(Column &column : table->columns) {
+      if(iequals(column.name, row[3])) {
+        column.nullable = false;
+      }
+    }
+  }
+}
+
+size_t find_foreign_key_index(const Table &table, const std::string &name)
+{
+  for(size_t i = 0; i < table.foreign_keys.size(); ++i) {
+    if(table.foreign_keys[i].name == name)
+      return i;
+  }
+  return table.foreign_keys.size();
+}
+
+void load_foreign_keys(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_FOREIGN_KEYS)) {
+    if(row.size() < 10)
+      continue;
+
+    Table *table = find_table(catalog, row[0], row[1]);
+    if(table == nullptr)
+      continue;
+
+    size_t fk_index = find_foreign_key_index(*table, row[2]);
+    if(fk_index == table->foreign_keys.size()) {
+      const std::string referenced_table =
+          row[3] == "public" ? row[4] : row[3] + "." + row[4];
+
+      table->foreign_keys.push_back(ForeignKey {
+          .name               = row[2],
+          .column_names       = {},
+          .referenced_table   = referenced_table,
+          .referenced_columns = {},
+          .on_delete          = action_from_code(row[8]),
+          .on_update          = action_from_code(row[9])
+      });
+
+      fk_index = table->foreign_keys.size() - 1;
+    }
+
+    table->foreign_keys[fk_index].column_names.push_back(row[5]);
+    table->foreign_keys[fk_index].referenced_columns.push_back(row[6]);
+  }
+}
+
+void load_indexes(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_INDEXES)) {
+    if(row.size() < 6)
+      continue;
+
+    Table *table = find_table(catalog, row[0], row[1]);
+    if(table == nullptr)
+      continue;
+
+    std::vector<std::string> columns;
+    if(!row[5].empty())
+      columns = split(row[5], ',');
+
+    table->indexes.push_back(Index {
+        .name         = row[2],
+        .column_names = columns,
+        .unique       = (row[3] == "true"),
+        .type         = to_upper(row[4])
+    });
+  }
+}
+
+void load_checks(
+    CatalogState &catalog, const PostgreSQLConn &conn, const std::string &db
+)
+{
+  for(const auto &row : query_rows(conn, db, QUERY_CHECKS)) {
+    if(row.size() < 4)
+      continue;
+
+    Table *table = find_table(catalog, row[0], row[1]);
+    if(table == nullptr)
+      continue;
+
+    table->checks.push_back(
+        CheckConstraint {.name = row[2], .expression = row[3]}
+    );
+  }
+}
+
+std::vector<Table>
+    introspect_schema(const PostgreSQLConn &conn, const std::string &db)
+{
+  CatalogState catalog;
+
+  load_tables(catalog, conn, db);
+  load_columns(catalog, conn, db);
+  load_primary_keys(catalog, conn, db);
+  load_foreign_keys(catalog, conn, db);
+  load_indexes(catalog, conn, db);
+  load_checks(catalog, conn, db);
+
+  return catalog.tables;
+}
+
+TempDbGuard::~TempDbGuard()
+{
+  if(!enabled)
+    return;
+
+  const std::string dropdb_bin = env_or_default("DIFFQL_DROPDB_BIN", "dropdb");
+  const std::string command =
+      connection_env_prefix(conn) + shell_quote(dropdb_bin) +
+      connection_cli_options(conn) + " --if-exists " + shell_quote(dbname);
+
+  run_status_command(command);
+}
+
+} // namespace
 
 PostgreSQLConnector::PostgreSQLConnector(PostgreSQLConn conn_object)
     : m_conn_object(std::move(conn_object))
@@ -496,73 +706,73 @@ std::vector<Table> PostgreSQLConnector::get_schema()
 
 std::ifstream PostgreSQLConnector::dump() const
 {
-  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count();
+  const std::filesystem::path dump_path = make_temp_sql_file("diffql_pg_");
 
-  std::filesystem::path path =
-      std::filesystem::temp_directory_path() /
-      ("diffql_pg_" + std::to_string(now_ms) + ".sql");
+  const std::string           pg_dump_bin =
+      env_or_default("DIFFQL_PG_DUMP_BIN", "pg_dump");
+  const std::string command =
+      connection_env_prefix(m_conn_object) + shell_quote(pg_dump_bin) +
+      " --schema-only --no-owner --no-privileges --no-comments" +
+      connection_cli_options(m_conn_object) + " -f " +
+      shell_quote(dump_path.string()) + " " + shell_quote(m_conn_object.db);
 
-  std::string pg_dump_bin = env_or_default("DIFFQL_PG_DUMP_BIN", "pg_dump");
-  std::string inner = conn_prefix(m_conn_object) + shell_quote(pg_dump_bin) +
-                      " --schema-only --no-owner --no-privileges --no-comments" +
-                      conn_opts(m_conn_object) +
-                      " -f " + shell_quote(path.string()) +
-                      " " + shell_quote(m_conn_object.db);
+  if(run_status_command(command) != 0) {
+    throw std::runtime_error("pg_dump failed");
+  }
 
-  if(run_status_inner(inner) != 0) throw std::runtime_error("pg_dump failed");
+  std::ifstream file(dump_path);
+  if(!file.is_open()) {
+    throw std::runtime_error("unable to open PostgreSQL dump file");
+  }
 
-  std::ifstream file(path);
-  if(!file.is_open()) throw std::runtime_error("unable to open PostgreSQL dump file");
+  std::error_code ec;
+  std::filesystem::remove(dump_path, ec);
+
   return file;
 }
 
 std::vector<Table> PostgreSQLConnector::parse(std::istream &input) const
 {
-  std::string dump_sql((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-  if(dump_sql.empty()) return {};
-  dump_sql = sanitize_dump_sql(dump_sql);
+  std::string dump_sql(
+      (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>()
+  );
+  if(dump_sql.empty())
+    return {};
 
-  std::filesystem::path restore_file = make_tmp_file("diffql_restore_");
+  const std::string sanitized_dump = sanitize_dump_sql(dump_sql);
+
+  TemporaryFile     restore_file(make_temp_sql_file("diffql_restore_"));
   {
-    std::ofstream out(restore_file);
-    if(!out.is_open()) throw std::runtime_error("unable to create restore file");
-    out << dump_sql;
+    std::ofstream out(restore_file.path);
+    if(!out.is_open()) {
+      throw std::runtime_error("unable to create restore file");
+    }
+    out << sanitized_dump;
   }
 
-  std::string tmp_db = make_db_identifier();
-  TempDbGuard guard{m_conn_object, tmp_db, true};
+  const std::string temp_db = make_temp_database_name();
+  TempDbGuard       guard {m_conn_object, temp_db, true};
 
-  std::string createdb_bin = env_or_default("DIFFQL_CREATEDB_BIN", "createdb");
-  std::string create_cmd = conn_prefix(m_conn_object) + shell_quote(createdb_bin) +
-                           conn_opts(m_conn_object) +
-                           " " + shell_quote(tmp_db);
+  const std::string createdb_bin =
+      env_or_default("DIFFQL_CREATEDB_BIN", "createdb");
+  const std::string create_db_command =
+      connection_env_prefix(m_conn_object) + shell_quote(createdb_bin) +
+      connection_cli_options(m_conn_object) + " " + shell_quote(temp_db);
 
-  if(run_status_inner(create_cmd) != 0) {
-    std::error_code ec;
-    std::filesystem::remove(restore_file, ec);
+  if(run_status_command(create_db_command) != 0) {
     throw std::runtime_error("createdb failed");
   }
 
-  std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
-  std::string restore_cmd = conn_prefix(m_conn_object) + shell_quote(psql_bin) +
-                            " -X -q -v ON_ERROR_STOP=1" +
-                            conn_opts(m_conn_object) +
-                            " -d " + shell_quote(tmp_db) +
-                            " -f " + shell_quote(restore_file.string()) +
-                            " >/dev/null";
+  const std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
+  const std::string restore_command =
+      connection_env_prefix(m_conn_object) + shell_quote(psql_bin) +
+      " -X -q -v ON_ERROR_STOP=1" + connection_cli_options(m_conn_object) +
+      " -d " + shell_quote(temp_db) + " -f " +
+      shell_quote(restore_file.path.string()) + " >/dev/null";
 
-  if(run_status_inner(restore_cmd) != 0) {
-    std::error_code ec;
-    std::filesystem::remove(restore_file, ec);
+  if(run_status_command(restore_command) != 0) {
     throw std::runtime_error("restore dump failed");
   }
 
-  std::vector<Table> result = introspect_schema(m_conn_object, tmp_db);
-
-  std::error_code ec;
-  std::filesystem::remove(restore_file, ec);
-
-  return result;
+  return introspect_schema(m_conn_object, temp_db);
 }
