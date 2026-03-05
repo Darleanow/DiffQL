@@ -6,7 +6,8 @@ CONTAINER_NAME="diffql-postgresql-parser-test"
 PORT="55432"
 PG_USER="postgres"
 PG_PASSWORD="postgres"
-PG_DB="diffql_test"
+PG_DB="nation"
+SQL_FILE="$ROOT_DIR/SampleDB/PostGreSQL/nation.sql"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker introuvable"
@@ -15,6 +16,11 @@ fi
 
 if ! docker info >/dev/null 2>&1; then
   echo "docker daemon non disponible"
+  exit 1
+fi
+
+if [[ ! -f "$SQL_FILE" ]]; then
+  echo "fichier SQL introuvable: $SQL_FILE"
   exit 1
 fi
 
@@ -42,21 +48,7 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 
-cat <<'SQL' | docker exec -i "$CONTAINER_NAME" psql -U "$PG_USER" -d "$PG_DB" >/dev/null
-CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  email VARCHAR(120) NOT NULL UNIQUE,
-  age INT DEFAULT 18
-);
-
-CREATE TABLE orders (
-  id BIGSERIAL PRIMARY KEY,
-  user_id INT NOT NULL,
-  amount NUMERIC(10,2) NOT NULL
-);
-
-CREATE INDEX idx_orders_user_id ON orders(user_id);
-SQL
+cat "$SQL_FILE" | docker exec -i "$CONTAINER_NAME" psql -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" >/dev/null
 
 DIFFQL_PG_HOST=localhost \
 DIFFQL_PG_PORT="$PORT" \

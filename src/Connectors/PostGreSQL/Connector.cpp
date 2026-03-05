@@ -398,6 +398,65 @@ void apply_unique(Table &t, const std::vector<std::string> &cols, const std::opt
       .type = "BTREE"});
 }
 
+void apply_foreign_key(Table &t, const std::string &clause, const std::optional<std::string> &name)
+{
+  std::string lc = lower(clause);
+
+  size_t fk_pos = lc.find("foreign key");
+  if(fk_pos == std::string::npos) return;
+
+  size_t src_open = clause.find('(', fk_pos);
+  if(src_open == std::string::npos) return;
+  auto [src_cols_raw, src_close] = extract_paren(clause, src_open);
+  if(src_close == std::string::npos) return;
+
+  size_t ref_pos = lc.find("references", src_close);
+  if(ref_pos == std::string::npos) return;
+  size_t ref_name_pos = ref_pos + std::string("references").size();
+  auto [ref_schema, ref_table] = parse_qualified_name(clause, ref_name_pos);
+  if(ref_table.empty()) return;
+
+  size_t dst_open = clause.find('(', ref_name_pos);
+  if(dst_open == std::string::npos) return;
+  auto [dst_cols_raw, dst_close] = extract_paren(clause, dst_open);
+  if(dst_close == std::string::npos) return;
+
+  std::string tail = lower(clause.substr(dst_close + 1));
+  std::string on_delete = "NO ACTION";
+  std::string on_update = "NO ACTION";
+
+  size_t od = tail.find("on delete");
+  if(od != std::string::npos) {
+    size_t s = skip_spaces(tail, od + std::string("on delete").size());
+    size_t e = tail.size();
+    size_t ou = tail.find("on update", s);
+    if(ou != std::string::npos) e = std::min(e, ou);
+    std::string value = trim(tail.substr(s, e - s));
+    if(!value.empty()) on_delete = upper(value);
+  }
+
+  size_t ou = tail.find("on update");
+  if(ou != std::string::npos) {
+    size_t s = skip_spaces(tail, ou + std::string("on update").size());
+    size_t e = tail.size();
+    size_t od2 = tail.find("on delete", s);
+    if(od2 != std::string::npos) e = std::min(e, od2);
+    std::string value = trim(tail.substr(s, e - s));
+    if(!value.empty()) on_update = upper(value);
+  }
+
+  std::string fk_name = name.value_or(t.name + "_fk_" + std::to_string(t.foreign_keys.size() + 1));
+  std::string referenced_table = ref_schema == "public" ? ref_table : ref_schema + "." + ref_table;
+
+  t.foreign_keys.emplace_back(ForeignKey{
+      .name = fk_name,
+      .column_names = parse_identifier_list(src_cols_raw),
+      .referenced_table = referenced_table,
+      .referenced_columns = parse_identifier_list(dst_cols_raw),
+      .on_delete = on_delete,
+      .on_update = on_update});
+}
+
 std::pair<std::optional<std::string>, std::string> unwrap_constraint(const std::string &s)
 {
   std::string t = trim(s);
@@ -429,6 +488,11 @@ void apply_constraint(Table &t, const std::string &raw_clause, const std::option
     auto [inside, close] = extract_paren(c, o);
     if(close == std::string::npos) return;
     apply_unique(t, parse_identifier_list(inside), name);
+    return;
+  }
+
+  if(starts_with_ci(lc, "foreign key")) {
+    apply_foreign_key(t, c, name);
   }
 }
 
@@ -456,7 +520,8 @@ std::optional<Table> parse_create_table(const std::string &stmt)
     if(item.empty()) continue;
 
     std::string li = lower(item);
-    if(starts_with_ci(li, "constraint") || starts_with_ci(li, "primary key") || starts_with_ci(li, "unique")) {
+    if(starts_with_ci(li, "constraint") || starts_with_ci(li, "primary key") ||
+       starts_with_ci(li, "unique") || starts_with_ci(li, "foreign key")) {
       auto [cn, clause] = unwrap_constraint(item);
       apply_constraint(t, clause, cn);
       continue;

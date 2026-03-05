@@ -73,6 +73,28 @@ int main()
 
         std::cout << "\n";
       }
+
+      std::cout << "  foreign_keys=" << table.foreign_keys.size() << "\n";
+      for(const ForeignKey &fk : table.foreign_keys) {
+        std::cout << "    " << fk.name << " cols=";
+        for(size_t i = 0; i < fk.column_names.size(); ++i) {
+          if(i > 0) {
+            std::cout << ",";
+          }
+          std::cout << fk.column_names[i];
+        }
+
+        std::cout << " ref=" << fk.referenced_table << "(";
+        for(size_t i = 0; i < fk.referenced_columns.size(); ++i) {
+          if(i > 0) {
+            std::cout << ",";
+          }
+          std::cout << fk.referenced_columns[i];
+        }
+        std::cout << ")"
+                  << " on_delete=" << fk.on_delete
+                  << " on_update=" << fk.on_update << "\n";
+      }
     }
 
     return 0;
