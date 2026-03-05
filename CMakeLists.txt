@@ -65,6 +65,7 @@ add_executable(${PROJECT_NAME}
     src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
     src/Connectors/MariaDB/Connector.cpp
     src/Parser/DDLVisitor.cpp
+    src/DiffEngine/DiffEngine.cpp
 )
 
 # Include directories
