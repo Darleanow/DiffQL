@@ -10,8 +10,12 @@ struct CanonicalType
     INTEGER,
     BIGINT,
     SMALLINT,
+    TINYINT,
+    MEDIUMINT,
     VARCHAR,
     TEXT,
+    MEDIUMTEXT,
+    LONGTEXT,
     CHAR,
     DECIMAL,
     FLOAT,
@@ -19,16 +23,17 @@ struct CanonicalType
     DATE,
     DATETIME,
     TIMESTAMP,
+    TIME,
     BOOLEAN,
     BLOB,
-    JSON
+    JSON,
+    ENUM
   };
 
   BaseType           base;
   std::optional<int> length;
   std::optional<int> precision;
   std::optional<int> scale;
-  std::string        raw_type; // Debug purposes
 };
 
 struct Column
@@ -36,17 +41,16 @@ struct Column
   std::string                name;
   CanonicalType              type;
   bool                       nullable;
-  std::optional<std::string> default_value;
   bool                       auto_increment;
-  int                        position; // Table order
+  std::optional<std::string> default_value;
 
-  std::string                source_dbms; // MariaDB, etc...
+  std::string source_dbms; // MariaDB, etc...
 };
 
 struct PrimaryKey
 {
-  std::vector<std::string>   column_names;
   std::optional<std::string> constraint_name;
+  std::vector<std::string>   column_names;
 };
 
 struct ForeignKey
