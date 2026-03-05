@@ -19,7 +19,7 @@ class PostgreSQLConnector final : public BaseConnector
 {
 public:
   explicit PostgreSQLConnector(PostgreSQLConn conn_object);
-  ~PostgreSQLConnector();
+  ~PostgreSQLConnector() = default;
 
   std::vector<Table> get_schema() final;
 
