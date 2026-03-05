@@ -26,10 +26,9 @@ struct TableDiff
   std::string                               table_name;
 
   std::vector<ElementDiff<Column>>          column_diffs;
-  std::optional<ElementDiff<PrimaryKey>>    pk_diffs;
+  std::optional<ElementDiff<PrimaryKey>>    pk_diff;
   std::vector<ElementDiff<ForeignKey>>      fk_diffs;
   std::vector<ElementDiff<Index>>           index_diffs;
-
   std::vector<ElementDiff<CheckConstraint>> check_diffs;
 };
 
@@ -47,15 +46,22 @@ public:
   );
 
   const SchemaDiff &compare_schemas();
-  void              generate_report(const SchemaDiff &schema) const;
 
 protected:
   float jaro_winkler(const std::string &s1, const std::string &s2) const;
 
 private:
-  std::vector<Table>       m_schema_origin, m_schema_dest;
+  std::vector<Table> m_schema_origin;
+  std::vector<Table> m_schema_dest;
+  SchemaDiff         m_diff;
 
-  std::optional<TableDiff> compare_table_by_fields(
-      const Table &table_origin, const Table &table_dest
+  std::optional<TableDiff> compare_tables(
+      const Table &origin, const Table &dest
+  ) const;
+
+  template <typename T>
+  std::vector<ElementDiff<T>> diff_elements(
+      const std::vector<T> &origins,
+      const std::vector<T> &dests
   ) const;
 };
