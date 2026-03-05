@@ -24,9 +24,9 @@ public:
   std::vector<Table> get_schema() final;
 
 private:
-  MariaDBConn              m_conn_object;
+  MariaDBConn        m_conn_object;
 
-  std::ifstream            dump();
+  std::ifstream      dump();
 
-  std::vector<Table>       parse(std::ifstream file);
+  std::vector<Table> parse(const std::ifstream &file);
 };

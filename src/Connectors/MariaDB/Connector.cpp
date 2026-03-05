@@ -88,7 +88,7 @@ std::ifstream MariaDBConnector::dump()
   return file;
 }
 
-std::vector<Table> MariaDBConnector::parse(const std::ifstream& file)
+std::vector<Table> MariaDBConnector::parse(const std::ifstream &file)
 {
   // Read entire file into string
   std::ostringstream ss;
