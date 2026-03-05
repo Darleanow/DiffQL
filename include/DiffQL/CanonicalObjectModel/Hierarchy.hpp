@@ -34,6 +34,13 @@ struct CanonicalType
   std::optional<int> length;
   std::optional<int> precision;
   std::optional<int> scale;
+
+  bool operator==(const CanonicalType &o) const
+  {
+    return base == o.base && length == o.length
+           && precision == o.precision && scale == o.scale;
+  }
+  bool operator!=(const CanonicalType &o) const { return !(*this == o); }
 };
 
 struct Column
@@ -44,13 +51,27 @@ struct Column
   bool                       auto_increment;
   std::optional<std::string> default_value;
 
-  std::string source_dbms; // MariaDB, etc...
+  std::string source_dbms;
+
+  bool operator==(const Column &o) const
+  {
+    return name == o.name && type == o.type && nullable == o.nullable
+           && auto_increment == o.auto_increment
+           && default_value == o.default_value;
+  }
+  bool operator!=(const Column &o) const { return !(*this == o); }
 };
 
 struct PrimaryKey
 {
   std::optional<std::string> constraint_name;
   std::vector<std::string>   column_names;
+
+  bool operator==(const PrimaryKey &o) const
+  {
+    return column_names == o.column_names;
+  }
+  bool operator!=(const PrimaryKey &o) const { return !(*this == o); }
 };
 
 struct ForeignKey
@@ -61,6 +82,15 @@ struct ForeignKey
   std::vector<std::string> referenced_columns;
   std::string              on_delete;
   std::string              on_update;
+
+  bool operator==(const ForeignKey &o) const
+  {
+    return name == o.name && column_names == o.column_names
+           && referenced_table == o.referenced_table
+           && referenced_columns == o.referenced_columns
+           && on_delete == o.on_delete && on_update == o.on_update;
+  }
+  bool operator!=(const ForeignKey &o) const { return !(*this == o); }
 };
 
 struct Index
@@ -68,19 +98,32 @@ struct Index
   std::string              name;
   std::vector<std::string> column_names;
   bool                     unique;
-  std::string              type; // BTREE, HASH....
+  std::string              type;
+
+  bool operator==(const Index &o) const
+  {
+    return name == o.name && column_names == o.column_names
+           && unique == o.unique && type == o.type;
+  }
+  bool operator!=(const Index &o) const { return !(*this == o); }
 };
 
 struct CheckConstraint
 {
   std::string name;
-  std::string expression; // for instance, "age >= 18"
+  std::string expression;
+
+  bool operator==(const CheckConstraint &o) const
+  {
+    return name == o.name && expression == o.expression;
+  }
+  bool operator!=(const CheckConstraint &o) const { return !(*this == o); }
 };
 
 struct Table
 {
   std::string                  name;
-  std::string                  schema; // public, dbo, default if empty
+  std::string                  schema;
   std::vector<Column>          columns;
   std::optional<PrimaryKey>    primary_key;
   std::vector<ForeignKey>      foreign_keys;
