@@ -1,34 +1,31 @@
 #pragma once
 
 #include "DiffQL/Connectors/BaseConnector.hpp"
-#include <libpq-fe.h>
-#include <vector>
 #include <fstream>
+#include <istream>
+#include <string>
+#include <vector>
 
 struct PostgreSQLConn
 {
-  const std::string host;
-  const std::string user;
-  const std::string passwd;
-  const std::string db;
-  const std::string port;
+  std::string host;
+  std::string user;
+  std::string passwd;
+  std::string db;
+  std::string port;
 };
-
-struct Table;
 
 class PostgreSQLConnector final : public BaseConnector
 {
 public:
-  PostgreSQLConnector(PostgreSQLConn conn_object);
+  explicit PostgreSQLConnector(PostgreSQLConn conn_object);
   ~PostgreSQLConnector();
 
   std::vector<Table> get_schema() final;
 
 private:
-  PostgreSQLConn m_conn_object;
-  PGconn*        m_connection;
+  PostgreSQLConn      m_conn_object;
 
-  std::ifstream  dump();
-
-  void           parse(std::ifstream file);
+  std::ifstream       dump() const;
+  std::vector<Table>  parse(std::istream &input) const;
 };
