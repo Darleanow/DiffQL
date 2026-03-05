@@ -4,6 +4,53 @@
 #include <iostream>
 #include <string>
 
+std::string type_to_string(const CanonicalType &type)
+{
+  switch(type.base) {
+  case CanonicalType::INTEGER:
+    return "integer";
+  case CanonicalType::BIGINT:
+    return "bigint";
+  case CanonicalType::SMALLINT:
+    return "smallint";
+  case CanonicalType::VARCHAR:
+    if(type.length.has_value())
+      return "varchar(" + std::to_string(*type.length) + ")";
+    return "varchar";
+  case CanonicalType::TEXT:
+    return "text";
+  case CanonicalType::CHAR:
+    if(type.length.has_value())
+      return "char(" + std::to_string(*type.length) + ")";
+    return "char";
+  case CanonicalType::DECIMAL:
+    if(type.precision.has_value() && type.scale.has_value()) {
+      return "decimal(" + std::to_string(*type.precision) + "," +
+             std::to_string(*type.scale) + ")";
+    }
+    if(type.precision.has_value())
+      return "decimal(" + std::to_string(*type.precision) + ")";
+    return "decimal";
+  case CanonicalType::FLOAT:
+    return "float";
+  case CanonicalType::DOUBLE:
+    return "double";
+  case CanonicalType::DATE:
+    return "date";
+  case CanonicalType::DATETIME:
+    return "datetime";
+  case CanonicalType::TIMESTAMP:
+    return "timestamp";
+  case CanonicalType::BOOLEAN:
+    return "boolean";
+  case CanonicalType::BLOB:
+    return "blob";
+  case CanonicalType::JSON:
+    return "json";
+  }
+  return "text";
+}
+
 std::string env_or_default(const char *name, const char *fallback)
 {
   const char *value = std::getenv(name);
@@ -16,16 +63,16 @@ std::string env_or_default(const char *name, const char *fallback)
 int main()
 {
   PostgreSQLConn conn {
-      .host = env_or_default("DIFFQL_PG_HOST", "localhost"),
-      .user = env_or_default("DIFFQL_PG_USER", "postgres"),
+      .host   = env_or_default("DIFFQL_PG_HOST", "localhost"),
+      .user   = env_or_default("DIFFQL_PG_USER", "postgres"),
       .passwd = env_or_default("DIFFQL_PG_PASSWORD", ""),
-      .db = env_or_default("DIFFQL_PG_DB", "postgres"),
-      .port = env_or_default("DIFFQL_PG_PORT", "5432")
+      .db     = env_or_default("DIFFQL_PG_DB", "postgres"),
+      .port   = env_or_default("DIFFQL_PG_PORT", "5432")
   };
 
   try {
     PostgreSQLConnector connector(conn);
-    std::vector<Table> schema = connector.get_schema();
+    std::vector<Table>  schema = connector.get_schema();
 
     std::cout << "database=" << conn.db << "\n";
     std::cout << "tables=" << schema.size() << "\n";
@@ -36,9 +83,10 @@ int main()
 
       for(const Column &column : table.columns) {
         std::cout << "    " << column.position << " " << column.name
-                  << " type=" << column.type.raw_type
+                  << " type=" << type_to_string(column.type)
                   << " nullable=" << (column.nullable ? "true" : "false")
-                  << " auto_increment=" << (column.auto_increment ? "true" : "false");
+                  << " auto_increment="
+                  << (column.auto_increment ? "true" : "false");
 
         if(column.default_value.has_value()) {
           std::cout << " default=" << *column.default_value;
@@ -60,8 +108,8 @@ int main()
 
       std::cout << "  indexes=" << table.indexes.size() << "\n";
       for(const Index &idx : table.indexes) {
-        std::cout << "    " << idx.name << " unique="
-                  << (idx.unique ? "true" : "false")
+        std::cout << "    " << idx.name
+                  << " unique=" << (idx.unique ? "true" : "false")
                   << " type=" << idx.type << " cols=";
 
         for(size_t i = 0; i < idx.column_names.size(); ++i) {

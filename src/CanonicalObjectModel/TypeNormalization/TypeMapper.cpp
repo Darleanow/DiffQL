@@ -69,56 +69,56 @@ CanonicalType PostgreSQLTypeMapper::map(const std::string &raw)
   const std::string normalized = to_lower(trim(raw));
 
   if(normalized == "smallint" || normalized == "int2") {
-    return {CanonicalType::SMALLINT, {}, {}, {}, raw};
+    return {CanonicalType::SMALLINT, {}, {}, {}};
   }
   if(normalized == "bigint" || normalized == "int8") {
-    return {CanonicalType::BIGINT, {}, {}, {}, raw};
+    return {CanonicalType::BIGINT, {}, {}, {}};
   }
   if(normalized == "integer" || normalized == "int" || normalized == "int4") {
-    return {CanonicalType::INTEGER, {}, {}, {}, raw};
+    return {CanonicalType::INTEGER, {}, {}, {}};
   }
   if(normalized.find("character varying") == 0 ||
      normalized.find("varchar") == 0) {
     const std::optional<int> length = parse_single_length(normalized);
     if(length.has_value()) {
-      return {CanonicalType::VARCHAR, *length, {}, {}, raw};
+      return {CanonicalType::VARCHAR, *length, {}, {}};
     }
-    return {CanonicalType::VARCHAR, {}, {}, {}, raw};
+    return {CanonicalType::VARCHAR, {}, {}, {}};
   }
   if(normalized.find("character") == 0 || normalized.find("char") == 0) {
     const std::optional<int> length = parse_single_length(normalized);
     if(length.has_value()) {
-      return {CanonicalType::CHAR, *length, {}, {}, raw};
+      return {CanonicalType::CHAR, *length, {}, {}};
     }
-    return {CanonicalType::CHAR, {}, {}, {}, raw};
+    return {CanonicalType::CHAR, {}, {}, {}};
   }
   if(normalized == "text") {
-    return {CanonicalType::TEXT, {}, {}, {}, raw};
+    return {CanonicalType::TEXT, {}, {}, {}};
   }
   if(normalized.find("numeric") == 0 || normalized.find("decimal") == 0) {
-    return {CanonicalType::DECIMAL, {}, {}, {}, raw};
+    return {CanonicalType::DECIMAL, {}, {}, {}};
   }
   if(normalized == "real" || normalized == "float4") {
-    return {CanonicalType::FLOAT, {}, {}, {}, raw};
+    return {CanonicalType::FLOAT, {}, {}, {}};
   }
   if(normalized == "double precision" || normalized == "float8") {
-    return {CanonicalType::DOUBLE, {}, {}, {}, raw};
+    return {CanonicalType::DOUBLE, {}, {}, {}};
   }
   if(normalized == "date") {
-    return {CanonicalType::DATE, {}, {}, {}, raw};
+    return {CanonicalType::DATE, {}, {}, {}};
   }
   if(normalized.find("timestamp") == 0 || normalized == "timestamptz") {
-    return {CanonicalType::TIMESTAMP, {}, {}, {}, raw};
+    return {CanonicalType::TIMESTAMP, {}, {}, {}};
   }
   if(normalized == "boolean" || normalized == "bool") {
-    return {CanonicalType::BOOLEAN, {}, {}, {}, raw};
+    return {CanonicalType::BOOLEAN, {}, {}, {}};
   }
   if(normalized == "bytea") {
-    return {CanonicalType::BLOB, {}, {}, {}, raw};
+    return {CanonicalType::BLOB, {}, {}, {}};
   }
   if(normalized == "json" || normalized == "jsonb") {
-    return {CanonicalType::JSON, {}, {}, {}, raw};
+    return {CanonicalType::JSON, {}, {}, {}};
   }
 
-  return {CanonicalType::TEXT, {}, {}, {}, raw};
+  return {CanonicalType::TEXT, {}, {}, {}};
 }
