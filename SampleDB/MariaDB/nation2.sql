@@ -1,6 +1,6 @@
 -- MySQL dump 10.13  Distrib 8.0.16, for Win64 (x86_64)
 --
--- Host: localhost    Database: nation
+-- Host: localhost    Database: nation2
 -- ------------------------------------------------------
 -- Server version	5.5.5-10.4.8-MariaDB
 
@@ -15,38 +15,24 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
---
--- Current Database: `nation`
---
-
 CREATE DATABASE /*!32312 IF NOT EXISTS*/ `nation2` /*!40100 DEFAULT CHARACTER SET utf8 */;
 
 USE `nation2`;
 
 --
--- Table structure for table `continents`
+-- Table: continents — MODIFIED: added column `area`
 --
 
 DROP TABLE IF EXISTS `continents`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `continents` (
   `continent_id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
   `area` decimal(10,2) DEFAULT NULL,
   PRIMARY KEY (`continent_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `continents`
---
-
-
---
-
---
--- Table structure for table `cities`
+-- Table: cities — ADDED (new table)
 --
 
 DROP TABLE IF EXISTS `cities`;
@@ -59,12 +45,11 @@ CREATE TABLE `cities` (
   CONSTRAINT `fk_city_country` FOREIGN KEY (`country_id`) REFERENCES `countries` (`country_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Table structure for table `countries`
+--
+-- Table: countries — MODIFIED: area decimal->float, added `capital`, FK renamed + ON DELETE CASCADE
 --
 
 DROP TABLE IF EXISTS `countries`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `countries` (
   `country_id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(50) DEFAULT NULL,
@@ -80,12 +65,13 @@ CREATE TABLE `countries` (
   KEY `region_id` (`region_id`),
   CONSTRAINT `fk_countries_region` FOREIGN KEY (`region_id`) REFERENCES `regions` (`region_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=240 DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
-DROP TABLE IF EXISTS `country_languages`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
-CREATE TABLE `country_languages` (
+--
+-- Table: CountryLanguages — MODIFIED: slightly changed name, added `id` auto-inc PK, old PK->UNIQUE
+--
+
+DROP TABLE IF EXISTS `CountryLanguages`;
+CREATE TABLE `CountryLanguages` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `country_id` int(11) NOT NULL,
   `language_id` int(11) NOT NULL,
@@ -96,11 +82,12 @@ CREATE TABLE `country_languages` (
   CONSTRAINT `country_languages_ibfk_1` FOREIGN KEY (`country_id`) REFERENCES `countries` (`country_id`),
   CONSTRAINT `country_languages_ibfk_2` FOREIGN KEY (`language_id`) REFERENCES `languages` (`language_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table: country_stats — MODIFIED: gdp decimal(15,0)->decimal(20,2), added `gdp_per_capita`
+--
 
 DROP TABLE IF EXISTS `country_stats`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `country_stats` (
   `country_id` int(11) NOT NULL,
   `year` int(11) NOT NULL,
@@ -110,41 +97,39 @@ CREATE TABLE `country_stats` (
   PRIMARY KEY (`country_id`,`year`),
   CONSTRAINT `country_stats_ibfk_1` FOREIGN KEY (`country_id`) REFERENCES `countries` (`country_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
-DROP TABLE IF EXISTS `guests`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
-CREATE TABLE `guests` (
-  `guest_id` int(11) NOT NULL,
-  `name` varchar(100) NOT NULL,
-  PRIMARY KEY (`guest_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
+--
+-- Table: guests — DROPPED (not present in nation2)
+-- (intentionally omitted)
+--
+
+--
+-- Table: languages — IDENTICAL (no changes)
+--
 
 DROP TABLE IF EXISTS `languages`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `languages` (
   `language_id` int(11) NOT NULL AUTO_INCREMENT,
   `language` varchar(50) NOT NULL,
   PRIMARY KEY (`language_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=458 DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table: region_areas — IDENTICAL (no changes)
+--
 
 DROP TABLE IF EXISTS `region_areas`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `region_areas` (
   `region_name` varchar(100) NOT NULL,
   `region_area` decimal(15,2) NOT NULL,
   PRIMARY KEY (`region_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table: regions — IDENTICAL (no changes)
+--
 
 DROP TABLE IF EXISTS `regions`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `regions` (
   `region_id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,
@@ -153,21 +138,19 @@ CREATE TABLE `regions` (
   KEY `continent_id` (`continent_id`),
   CONSTRAINT `regions_ibfk_1` FOREIGN KEY (`continent_id`) REFERENCES `continents` (`continent_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=26 DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `vips`
+-- Table: vips — MODIFIED: added `email` column, added unique index
 --
 
 DROP TABLE IF EXISTS `vips`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
 CREATE TABLE `vips` (
   `vip_id` int(11) NOT NULL,
   `name` varchar(100) NOT NULL,
-  PRIMARY KEY (`vip_id`)
+  `email` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`vip_id`),
+  UNIQUE KEY `uq_vip_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
