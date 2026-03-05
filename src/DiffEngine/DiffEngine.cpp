@@ -76,7 +76,7 @@ float DiffEngine::jaro_winkler(const std::string &s1, const std::string &s2) con
   }
 
   const float m    = static_cast<float>(matches);
-  const float jaro = (m / static_cast<float>(len1) + m / static_cast<float>(len2) + (m - transpositions / 2.0f) / m) / 3.0f;
+  const float jaro = (m / len1 + m / len2 + (m - transpositions / 2.0f) / m) / 3.0f;
 
   // Winkler prefix bonus (up to 4 chars)
   int          prefix       = 0;
