@@ -3,16 +3,21 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <sys/wait.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace {
+constexpr char FIELD_SEP = 0x1f;
+
 std::string trim(const std::string &s)
 {
   size_t a = 0;
@@ -20,32 +25,6 @@ std::string trim(const std::string &s)
   while(a < b && std::isspace(static_cast<unsigned char>(s[a])) != 0) ++a;
   while(b > a && std::isspace(static_cast<unsigned char>(s[b - 1])) != 0) --b;
   return s.substr(a, b - a);
-}
-
-std::string normalize_statement_lead(std::string s)
-{
-  while(true) {
-    s = trim(s);
-    if(s.empty()) return s;
-
-    if(s[0] == '\\') {
-      size_t nl = s.find('\n');
-      if(nl == std::string::npos) return "";
-      s = s.substr(nl + 1);
-      continue;
-    }
-
-    if(s.size() >= 2 && s[0] == '-' && s[1] == '-') {
-      size_t nl = s.find('\n');
-      if(nl == std::string::npos) return "";
-      s = s.substr(nl + 1);
-      continue;
-    }
-
-    break;
-  }
-
-  return s;
 }
 
 std::string lower(std::string s)
@@ -64,6 +43,20 @@ std::string upper(std::string s)
   return s;
 }
 
+std::vector<std::string> split(const std::string &s, char sep)
+{
+  std::vector<std::string> out;
+  size_t start = 0;
+  for(size_t i = 0; i < s.size(); ++i) {
+    if(s[i] == sep) {
+      out.emplace_back(s.substr(start, i - start));
+      start = i + 1;
+    }
+  }
+  out.emplace_back(s.substr(start));
+  return out;
+}
+
 bool starts_with_ci(const std::string &s, const std::string &prefix)
 {
   if(prefix.size() > s.size()) return false;
@@ -74,15 +67,16 @@ bool starts_with_ci(const std::string &s, const std::string &prefix)
   return true;
 }
 
-size_t skip_spaces(const std::string &s, size_t pos)
+std::string sanitize_dump_sql(const std::string &dump_sql)
 {
-  while(pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos])) != 0) ++pos;
-  return pos;
-}
-
-bool is_ident_char(char c)
-{
-  return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '$';
+  std::string out;
+  for(const std::string &line : split(dump_sql, '\n')) {
+    std::string l = trim(line);
+    if(starts_with_ci(l, "SET transaction_timeout")) continue;
+    out += line;
+    out.push_back('\n');
+  }
+  return out;
 }
 
 std::string shell_quote(const std::string &s)
@@ -98,191 +92,117 @@ std::string shell_quote(const std::string &s)
   return out;
 }
 
-std::optional<std::string> parse_identifier(const std::string &s, size_t &pos)
+int normalize_status(int status)
 {
-  pos = skip_spaces(s, pos);
-  if(pos >= s.size()) return std::nullopt;
-
-  if(s[pos] == '"') {
-    ++pos;
-    std::string out;
-    while(pos < s.size()) {
-      if(s[pos] == '"') {
-        if(pos + 1 < s.size() && s[pos + 1] == '"') {
-          out.push_back('"');
-          pos += 2;
-          continue;
-        }
-        ++pos;
-        return out;
-      }
-      out.push_back(s[pos]);
-      ++pos;
-    }
-    return std::nullopt;
-  }
-
-  size_t start = pos;
-  while(pos < s.size() && is_ident_char(s[pos])) ++pos;
-  if(start == pos) return std::nullopt;
-  return s.substr(start, pos - start);
+  if(status == -1) return -1;
+  if(WIFEXITED(status)) return WEXITSTATUS(status);
+  if(WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+  return status;
 }
 
-std::pair<std::string, std::string> parse_qualified_name(const std::string &s, size_t &pos)
+std::string env_or_default(const char *name, const std::string &fallback)
 {
-  auto first = parse_identifier(s, pos);
-  if(!first.has_value()) return {"public", ""};
-
-  pos = skip_spaces(s, pos);
-  if(pos < s.size() && s[pos] == '.') {
-    ++pos;
-    auto second = parse_identifier(s, pos);
-    if(second.has_value()) return {*first, *second};
-  }
-
-  return {"public", *first};
+  const char *value = std::getenv(name);
+  if(value == nullptr || std::string(value).empty()) return fallback;
+  return std::string(value);
 }
 
-std::pair<std::string, size_t> extract_paren(const std::string &s, size_t open_pos)
+std::string action_from_code(const std::string &code)
 {
-  if(open_pos >= s.size() || s[open_pos] != '(') return {"", std::string::npos};
-
-  bool in_single = false;
-  bool in_double = false;
-  int depth = 0;
-
-  for(size_t i = open_pos; i < s.size(); ++i) {
-    const char c = s[i];
-    if(in_single) {
-      if(c == '\'' && i + 1 < s.size() && s[i + 1] == '\'') { ++i; continue; }
-      if(c == '\'') in_single = false;
-      continue;
-    }
-    if(in_double) {
-      if(c == '"' && i + 1 < s.size() && s[i + 1] == '"') { ++i; continue; }
-      if(c == '"') in_double = false;
-      continue;
-    }
-    if(c == '\'') { in_single = true; continue; }
-    if(c == '"') { in_double = true; continue; }
-    if(c == '(') { ++depth; continue; }
-    if(c == ')') {
-      --depth;
-      if(depth == 0) return {s.substr(open_pos + 1, i - open_pos - 1), i};
-    }
-  }
-
-  return {"", std::string::npos};
+  if(code == "a") return "NO ACTION";
+  if(code == "r") return "RESTRICT";
+  if(code == "c") return "CASCADE";
+  if(code == "n") return "SET NULL";
+  if(code == "d") return "SET DEFAULT";
+  return "NO ACTION";
 }
 
-std::vector<std::string> split_top_level_csv(const std::string &s)
+std::string make_db_identifier()
 {
-  std::vector<std::string> out;
-  bool in_single = false;
-  bool in_double = false;
-  int depth = 0;
-  size_t start = 0;
-
-  for(size_t i = 0; i < s.size(); ++i) {
-    const char c = s[i];
-    if(in_single) {
-      if(c == '\'' && i + 1 < s.size() && s[i + 1] == '\'') { ++i; continue; }
-      if(c == '\'') in_single = false;
-      continue;
-    }
-    if(in_double) {
-      if(c == '"' && i + 1 < s.size() && s[i + 1] == '"') { ++i; continue; }
-      if(c == '"') in_double = false;
-      continue;
-    }
-    if(c == '\'') { in_single = true; continue; }
-    if(c == '"') { in_double = true; continue; }
-    if(c == '(') { ++depth; continue; }
-    if(c == ')') { if(depth > 0) --depth; continue; }
-    if(c == ',' && depth == 0) {
-      out.emplace_back(trim(s.substr(start, i - start)));
-      start = i + 1;
-    }
-  }
-
-  if(start < s.size()) out.emplace_back(trim(s.substr(start)));
-  return out;
+  auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::system_clock::now().time_since_epoch())
+                 .count();
+  return "diffql_tmp_" + std::to_string(now);
 }
 
-std::vector<std::string> split_sql_statements(const std::string &sql)
+std::filesystem::path make_tmp_file(const std::string &prefix)
 {
-  std::vector<std::string> out;
-  bool in_single = false;
-  bool in_double = false;
-  bool in_line = false;
-  int block_depth = 0;
-  std::string dollar;
-  size_t start = 0;
-
-  for(size_t i = 0; i < sql.size(); ++i) {
-    if(in_line) {
-      if(sql[i] == '\n') in_line = false;
-      continue;
-    }
-    if(block_depth > 0) {
-      if(i + 1 < sql.size() && sql[i] == '/' && sql[i + 1] == '*') { ++block_depth; ++i; continue; }
-      if(i + 1 < sql.size() && sql[i] == '*' && sql[i + 1] == '/') { --block_depth; ++i; }
-      continue;
-    }
-    if(!dollar.empty()) {
-      if(i + dollar.size() <= sql.size() && sql.compare(i, dollar.size(), dollar) == 0) {
-        i += dollar.size() - 1;
-        dollar.clear();
-      }
-      continue;
-    }
-    if(in_single) {
-      if(sql[i] == '\'' && i + 1 < sql.size() && sql[i + 1] == '\'') { ++i; continue; }
-      if(sql[i] == '\'') in_single = false;
-      continue;
-    }
-    if(in_double) {
-      if(sql[i] == '"' && i + 1 < sql.size() && sql[i + 1] == '"') { ++i; continue; }
-      if(sql[i] == '"') in_double = false;
-      continue;
-    }
-
-    if(i + 1 < sql.size() && sql[i] == '-' && sql[i + 1] == '-') { in_line = true; ++i; continue; }
-    if(i + 1 < sql.size() && sql[i] == '/' && sql[i + 1] == '*') { block_depth = 1; ++i; continue; }
-    if(sql[i] == '\'') { in_single = true; continue; }
-    if(sql[i] == '"') { in_double = true; continue; }
-
-    if(sql[i] == '$') {
-      size_t j = i + 1;
-      while(j < sql.size() && is_ident_char(sql[j])) ++j;
-      if(j < sql.size() && sql[j] == '$') {
-        dollar = sql.substr(i, j - i + 1);
-        i = j;
-        continue;
-      }
-    }
-
-    if(sql[i] == ';') {
-      std::string stmt = trim(sql.substr(start, i - start));
-      if(!stmt.empty()) out.emplace_back(std::move(stmt));
-      start = i + 1;
-    }
-  }
-
-  std::string tail = trim(sql.substr(start));
-  if(!tail.empty()) out.emplace_back(std::move(tail));
-  return out;
+  auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::system_clock::now().time_since_epoch())
+                 .count();
+  return std::filesystem::temp_directory_path() /
+         (prefix + std::to_string(now) + ".sql");
 }
 
-std::vector<std::string> parse_identifier_list(const std::string &inside)
+std::string conn_prefix(const PostgreSQLConn &conn)
 {
-  std::vector<std::string> out;
-  for(const std::string &part : split_top_level_csv(inside)) {
-    size_t p = 0;
-    auto id = parse_identifier(part, p);
-    if(id.has_value()) out.emplace_back(*id);
+  std::string prefix;
+  if(!conn.passwd.empty()) prefix += "PGPASSWORD=" + shell_quote(conn.passwd) + " ";
+  return prefix;
+}
+
+std::string conn_opts(const PostgreSQLConn &conn)
+{
+  std::string host = conn.host.empty() ? "localhost" : conn.host;
+  std::string port = conn.port.empty() ? "5432" : conn.port;
+  return " -h " + shell_quote(host) + " -p " + shell_quote(port) +
+         " -U " + shell_quote(conn.user);
+}
+
+int run_status_inner(const std::string &inner)
+{
+  std::string cmd = "bash -lc " + shell_quote(inner);
+  return normalize_status(std::system(cmd.c_str()));
+}
+
+std::pair<int, std::string> run_capture_inner(const std::string &inner)
+{
+  std::string cmd = "bash -lc " + shell_quote(inner);
+  FILE *pipe = popen(cmd.c_str(), "r");
+  if(pipe == nullptr) throw std::runtime_error("failed to run command");
+
+  std::string output;
+  char        buf[4096];
+  while(fgets(buf, static_cast<int>(sizeof(buf)), pipe) != nullptr) {
+    output += buf;
   }
-  return out;
+
+  int status = normalize_status(pclose(pipe));
+  return {status, output};
+}
+
+std::vector<std::vector<std::string>> query_rows(const PostgreSQLConn &conn,
+                                                 const std::string &db,
+                                                 const std::string &sql)
+{
+  std::filesystem::path sql_file = make_tmp_file("diffql_query_");
+  {
+    std::ofstream out(sql_file);
+    if(!out.is_open()) throw std::runtime_error("unable to create query file");
+    out << sql;
+  }
+
+  std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
+  std::string inner = conn_prefix(conn) + shell_quote(psql_bin) +
+                      " -X -A -t -F $'\\x1f'" +
+                      conn_opts(conn) +
+                      " -d " + shell_quote(db) +
+                      " -f " + shell_quote(sql_file.string());
+
+  auto [status, output] = run_capture_inner(inner);
+  std::error_code ec;
+  std::filesystem::remove(sql_file, ec);
+
+  if(status != 0) throw std::runtime_error("psql query failed");
+
+  std::vector<std::vector<std::string>> rows;
+  for(const std::string &line_raw : split(output, '\n')) {
+    std::string line = trim(line_raw);
+    if(line.empty()) continue;
+    rows.emplace_back(split(line, FIELD_SEP));
+  }
+
+  return rows;
 }
 
 CanonicalType map_type(const std::string &raw)
@@ -300,9 +220,9 @@ CanonicalType map_type(const std::string &raw)
     }
   };
 
-  if(t == "smallint" || t == "int2" || t == "smallserial") return {CanonicalType::SMALLINT, {}, {}, {}, raw};
-  if(t == "bigint" || t == "int8" || t == "bigserial") return {CanonicalType::BIGINT, {}, {}, {}, raw};
-  if(t == "integer" || t == "int" || t == "int4" || t == "serial") return {CanonicalType::INTEGER, {}, {}, {}, raw};
+  if(t == "smallint" || t == "int2") return {CanonicalType::SMALLINT, {}, {}, {}, raw};
+  if(t == "bigint" || t == "int8") return {CanonicalType::BIGINT, {}, {}, {}, raw};
+  if(t == "integer" || t == "int" || t == "int4") return {CanonicalType::INTEGER, {}, {}, {}, raw};
   if(t.find("character varying") == 0 || t.find("varchar") == 0) {
     int n = 0;
     if(one_number(n)) return {CanonicalType::VARCHAR, n, {}, {}, raw};
@@ -325,342 +245,243 @@ CanonicalType map_type(const std::string &raw)
   return {CanonicalType::TEXT, {}, {}, {}, raw};
 }
 
-std::optional<Column> parse_column(const std::string &def, int position)
-{
-  size_t pos = 0;
-  auto name = parse_identifier(def, pos);
-  if(!name.has_value()) return std::nullopt;
-
-  std::string rest = trim(def.substr(pos));
-  if(rest.empty()) return std::nullopt;
-
-  std::string lr = " " + lower(rest);
-  size_t boundary = std::string::npos;
-  for(const std::string &m : std::vector<std::string>{
-          " default ", " not null", " null", " constraint", " primary key", " references", " unique", " check", " generated", " collate"}) {
-    size_t i = lr.find(m);
-    if(i != std::string::npos) {
-      size_t actual = i == 0 ? 0 : i - 1;
-      boundary = boundary == std::string::npos ? actual : std::min(boundary, actual);
-    }
-  }
-
-  std::string raw_type = boundary == std::string::npos ? trim(rest) : trim(rest.substr(0, boundary));
-  std::string attrs = boundary == std::string::npos ? "" : rest.substr(boundary);
-  std::string la = lower(attrs);
-
-  bool nullable = la.find("not null") == std::string::npos && la.find("primary key") == std::string::npos;
-  std::optional<std::string> default_value;
-  size_t d = la.find("default");
-  if(d != std::string::npos) {
-    size_t s = skip_spaces(attrs, d + 7);
-    size_t e = attrs.size();
-    for(const std::string &stop : std::vector<std::string>{
-            " not null", " null", " constraint", " primary key", " references", " unique", " check", " generated", " collate"}) {
-      size_t rel = lower(attrs.substr(s)).find(stop);
-      if(rel != std::string::npos) e = std::min(e, s + rel);
-    }
-    std::string v = trim(attrs.substr(s, e - s));
-    if(!v.empty()) default_value = v;
-  }
-
-  bool auto_increment = lower(raw_type).find("serial") != std::string::npos ||
-                        (default_value.has_value() && lower(*default_value).find("nextval(") != std::string::npos);
-
-  return Column{
-      .name = *name,
-      .type = map_type(raw_type),
-      .nullable = nullable,
-      .default_value = default_value,
-      .auto_increment = auto_increment,
-      .position = position,
-      .source_dbms = "postgresql"};
-}
-
-void apply_primary_key(Table &t, const std::vector<std::string> &cols, const std::optional<std::string> &name)
-{
-  if(cols.empty()) return;
-  t.primary_key = PrimaryKey{.column_names = cols, .constraint_name = name};
-  for(const std::string &pk : cols) {
-    for(Column &c : t.columns) {
-      if(lower(c.name) == lower(pk)) c.nullable = false;
-    }
-  }
-}
-
-void apply_unique(Table &t, const std::vector<std::string> &cols, const std::optional<std::string> &name)
-{
-  if(cols.empty()) return;
-  t.indexes.emplace_back(Index{
-      .name = name.value_or(t.name + "_unique_" + std::to_string(t.indexes.size() + 1)),
-      .column_names = cols,
-      .unique = true,
-      .type = "BTREE"});
-}
-
-void apply_foreign_key(Table &t, const std::string &clause, const std::optional<std::string> &name)
-{
-  std::string lc = lower(clause);
-
-  size_t fk_pos = lc.find("foreign key");
-  if(fk_pos == std::string::npos) return;
-
-  size_t src_open = clause.find('(', fk_pos);
-  if(src_open == std::string::npos) return;
-  auto [src_cols_raw, src_close] = extract_paren(clause, src_open);
-  if(src_close == std::string::npos) return;
-
-  size_t ref_pos = lc.find("references", src_close);
-  if(ref_pos == std::string::npos) return;
-  size_t ref_name_pos = ref_pos + std::string("references").size();
-  auto [ref_schema, ref_table] = parse_qualified_name(clause, ref_name_pos);
-  if(ref_table.empty()) return;
-
-  size_t dst_open = clause.find('(', ref_name_pos);
-  if(dst_open == std::string::npos) return;
-  auto [dst_cols_raw, dst_close] = extract_paren(clause, dst_open);
-  if(dst_close == std::string::npos) return;
-
-  std::string tail = lower(clause.substr(dst_close + 1));
-  std::string on_delete = "NO ACTION";
-  std::string on_update = "NO ACTION";
-
-  size_t od = tail.find("on delete");
-  if(od != std::string::npos) {
-    size_t s = skip_spaces(tail, od + std::string("on delete").size());
-    size_t e = tail.size();
-    size_t ou = tail.find("on update", s);
-    if(ou != std::string::npos) e = std::min(e, ou);
-    std::string value = trim(tail.substr(s, e - s));
-    if(!value.empty()) on_delete = upper(value);
-  }
-
-  size_t ou = tail.find("on update");
-  if(ou != std::string::npos) {
-    size_t s = skip_spaces(tail, ou + std::string("on update").size());
-    size_t e = tail.size();
-    size_t od2 = tail.find("on delete", s);
-    if(od2 != std::string::npos) e = std::min(e, od2);
-    std::string value = trim(tail.substr(s, e - s));
-    if(!value.empty()) on_update = upper(value);
-  }
-
-  std::string fk_name = name.value_or(t.name + "_fk_" + std::to_string(t.foreign_keys.size() + 1));
-  std::string referenced_table = ref_schema == "public" ? ref_table : ref_schema + "." + ref_table;
-
-  t.foreign_keys.emplace_back(ForeignKey{
-      .name = fk_name,
-      .column_names = parse_identifier_list(src_cols_raw),
-      .referenced_table = referenced_table,
-      .referenced_columns = parse_identifier_list(dst_cols_raw),
-      .on_delete = on_delete,
-      .on_update = on_update});
-}
-
-std::pair<std::optional<std::string>, std::string> unwrap_constraint(const std::string &s)
-{
-  std::string t = trim(s);
-  if(!starts_with_ci(t, "CONSTRAINT")) return {std::nullopt, t};
-
-  size_t p = std::string("CONSTRAINT").size();
-  auto name = parse_identifier(t, p);
-  if(!name.has_value()) return {std::nullopt, t};
-  return {*name, trim(t.substr(p))};
-}
-
-void apply_constraint(Table &t, const std::string &raw_clause, const std::optional<std::string> &name)
-{
-  std::string c = trim(raw_clause);
-  std::string lc = lower(c);
-
-  if(starts_with_ci(lc, "primary key")) {
-    size_t o = c.find('(');
-    if(o == std::string::npos) return;
-    auto [inside, close] = extract_paren(c, o);
-    if(close == std::string::npos) return;
-    apply_primary_key(t, parse_identifier_list(inside), name);
-    return;
-  }
-
-  if(starts_with_ci(lc, "unique")) {
-    size_t o = c.find('(');
-    if(o == std::string::npos) return;
-    auto [inside, close] = extract_paren(c, o);
-    if(close == std::string::npos) return;
-    apply_unique(t, parse_identifier_list(inside), name);
-    return;
-  }
-
-  if(starts_with_ci(lc, "foreign key")) {
-    apply_foreign_key(t, c, name);
-  }
-}
-
-std::optional<Table> parse_create_table(const std::string &stmt)
-{
-  size_t p = std::string("CREATE TABLE").size();
-  std::string ls = lower(stmt);
-
-  size_t ine = ls.find("if not exists", p);
-  if(ine != std::string::npos && ine == skip_spaces(ls, p)) p = ine + 13;
-
-  auto [schema, table_name] = parse_qualified_name(stmt, p);
-  if(table_name.empty()) return std::nullopt;
-
-  size_t open = stmt.find('(', p);
-  if(open == std::string::npos) return std::nullopt;
-
-  auto [body, close] = extract_paren(stmt, open);
-  if(close == std::string::npos) return std::nullopt;
-
-  Table t{.name = table_name, .schema = schema, .columns = {}, .primary_key = std::nullopt, .foreign_keys = {}, .indexes = {}, .checks = {}};
-
-  int position = 1;
-  for(const std::string &item : split_top_level_csv(body)) {
-    if(item.empty()) continue;
-
-    std::string li = lower(item);
-    if(starts_with_ci(li, "constraint") || starts_with_ci(li, "primary key") ||
-       starts_with_ci(li, "unique") || starts_with_ci(li, "foreign key")) {
-      auto [cn, clause] = unwrap_constraint(item);
-      apply_constraint(t, clause, cn);
-      continue;
-    }
-
-    auto col = parse_column(item, position);
-    if(!col.has_value()) continue;
-
-    if(li.find("primary key") != std::string::npos) {
-      apply_primary_key(t, {col->name}, std::nullopt);
-      col->nullable = false;
-    }
-
-    t.columns.push_back(*col);
-    ++position;
-  }
-
-  return t;
-}
-
 std::string table_key(const std::string &schema, const std::string &table)
 {
   return lower(schema) + "." + lower(table);
 }
 
-void parse_alter_table(const std::string &stmt,
-                       std::unordered_map<std::string, size_t> &index,
-                       std::vector<Table> &tables)
+std::vector<Table> introspect_schema(const PostgreSQLConn &conn, const std::string &db)
 {
-  size_t p = std::string("ALTER TABLE").size();
-  std::string ls = lower(stmt);
+  std::vector<Table> tables;
+  std::unordered_map<std::string, size_t> index;
 
-  size_t ie = ls.find("if exists", p);
-  if(ie != std::string::npos && ie == skip_spaces(ls, p)) p = ie + 9;
+  const std::string q_tables = R"SQL(
+SELECT n.nspname, c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r','p')
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+ORDER BY n.nspname, c.relname;
+)SQL";
 
-  size_t only = ls.find("only", p);
-  if(only != std::string::npos && only == skip_spaces(ls, p)) p = only + 4;
+  for(const auto &row : query_rows(conn, db, q_tables)) {
+    if(row.size() < 2) continue;
+    Table t{.name = row[1], .schema = row[0], .columns = {}, .primary_key = std::nullopt, .foreign_keys = {}, .indexes = {}, .checks = {}};
+    index[table_key(t.schema, t.name)] = tables.size();
+    tables.push_back(std::move(t));
+  }
 
-  auto [schema, table_name] = parse_qualified_name(stmt, p);
-  if(table_name.empty()) return;
+  const std::string q_columns = R"SQL(
+SELECT n.nspname,
+       c.relname,
+       a.attnum::text,
+       a.attname,
+       pg_catalog.format_type(a.atttypid, a.atttypmod),
+       CASE WHEN a.attnotnull THEN 'false' ELSE 'true' END,
+       COALESCE(pg_get_expr(ad.adbin, ad.adrelid), '')
+FROM pg_attribute a
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+WHERE c.relkind IN ('r','p')
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+ORDER BY n.nspname, c.relname, a.attnum;
+)SQL";
 
-  auto it = index.find(table_key(schema, table_name));
-  if(it == index.end()) return;
+  for(const auto &row : query_rows(conn, db, q_columns)) {
+    if(row.size() < 7) continue;
+    auto it = index.find(table_key(row[0], row[1]));
+    if(it == index.end()) continue;
 
-  size_t alter_column = ls.find("alter column", p);
-  if(alter_column != std::string::npos) {
-    size_t col_pos = alter_column + std::string("alter column").size();
-    auto col_name = parse_identifier(stmt, col_pos);
-    if(col_name.has_value()) {
-      size_t set_default = ls.find("set default", col_pos);
-      if(set_default != std::string::npos) {
-        std::string value = trim(stmt.substr(set_default + std::string("set default").size()));
-        for(Column &col : tables[it->second].columns) {
-          if(lower(col.name) == lower(*col_name)) {
-            col.default_value = value.empty() ? std::optional<std::string>{}
-                                              : std::optional<std::string>{value};
-            if(lower(value).find("nextval(") != std::string::npos) {
-              col.auto_increment = true;
-            }
-          }
-        }
-      }
+    int position = 0;
+    try {
+      position = std::stoi(row[2]);
+    } catch(...) {
+      continue;
+    }
+
+    std::optional<std::string> def;
+    if(!row[6].empty()) def = row[6];
+
+    bool auto_inc = def.has_value() && lower(*def).find("nextval(") != std::string::npos;
+
+    tables[it->second].columns.push_back(Column{
+        .name = row[3],
+        .type = map_type(row[4]),
+        .nullable = (row[5] == "true"),
+        .default_value = def,
+        .auto_increment = auto_inc,
+        .position = position,
+        .source_dbms = "postgresql"});
+  }
+
+  const std::string q_pk = R"SQL(
+SELECT n.nspname,
+       c.relname,
+       con.conname,
+       a.attname,
+       ord.idx::text
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ord(attnum, idx) ON true
+JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ord.attnum
+WHERE con.contype = 'p'
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+ORDER BY n.nspname, c.relname, ord.idx;
+)SQL";
+
+  for(const auto &row : query_rows(conn, db, q_pk)) {
+    if(row.size() < 5) continue;
+    auto it = index.find(table_key(row[0], row[1]));
+    if(it == index.end()) continue;
+
+    Table &t = tables[it->second];
+    if(!t.primary_key.has_value()) {
+      t.primary_key = PrimaryKey{.column_names = {}, .constraint_name = row[2]};
+    }
+    t.primary_key->column_names.push_back(row[3]);
+
+    for(Column &c : t.columns) {
+      if(lower(c.name) == lower(row[3])) c.nullable = false;
     }
   }
 
-  size_t add = ls.find("add", p);
-  if(add == std::string::npos) return;
+  const std::string q_fk = R"SQL(
+SELECT n.nspname,
+       c.relname,
+       con.conname,
+       fn.nspname,
+       fc.relname,
+       a.attname,
+       af.attname,
+       ord.idx::text,
+       con.confdeltype::text,
+       con.confupdtype::text
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_class fc ON fc.oid = con.confrelid
+JOIN pg_namespace fn ON fn.oid = fc.relnamespace
+JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ord(attnum, idx) ON true
+JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ord.attnum
+JOIN pg_attribute af ON af.attrelid = con.confrelid AND af.attnum = con.confkey[ord.idx]
+WHERE con.contype = 'f'
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+ORDER BY n.nspname, c.relname, con.conname, ord.idx;
+)SQL";
 
-  std::string rest = trim(stmt.substr(add + 3));
-  auto [cn, clause] = unwrap_constraint(rest);
-  apply_constraint(tables[it->second], clause, cn);
+  for(const auto &row : query_rows(conn, db, q_fk)) {
+    if(row.size() < 10) continue;
+    auto it = index.find(table_key(row[0], row[1]));
+    if(it == index.end()) continue;
+
+    Table &t = tables[it->second];
+    size_t fk_idx = t.foreign_keys.size();
+    for(size_t i = 0; i < t.foreign_keys.size(); ++i) {
+      if(t.foreign_keys[i].name == row[2]) {
+        fk_idx = i;
+        break;
+      }
+    }
+
+    if(fk_idx == t.foreign_keys.size()) {
+      std::string ref_table = row[3] == "public" ? row[4] : row[3] + "." + row[4];
+      t.foreign_keys.push_back(ForeignKey{
+          .name = row[2],
+          .column_names = {},
+          .referenced_table = ref_table,
+          .referenced_columns = {},
+          .on_delete = action_from_code(row[8]),
+          .on_update = action_from_code(row[9])});
+    }
+
+    t.foreign_keys[fk_idx].column_names.push_back(row[5]);
+    t.foreign_keys[fk_idx].referenced_columns.push_back(row[6]);
+  }
+
+  const std::string q_indexes = R"SQL(
+SELECT n.nspname,
+       c.relname,
+       ic.relname,
+       CASE WHEN ix.indisunique THEN 'true' ELSE 'false' END,
+       am.amname,
+       COALESCE(string_agg(a.attname, ',' ORDER BY k.ord), '')
+FROM pg_index ix
+JOIN pg_class c ON c.oid = ix.indrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_class ic ON ic.oid = ix.indexrelid
+JOIN pg_am am ON am.oid = ic.relam
+LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.attnum > 0
+LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+  AND c.relkind IN ('r','p')
+  AND NOT ix.indisprimary
+GROUP BY n.nspname, c.relname, ic.relname, ix.indisunique, am.amname
+ORDER BY n.nspname, c.relname, ic.relname;
+)SQL";
+
+  for(const auto &row : query_rows(conn, db, q_indexes)) {
+    if(row.size() < 6) continue;
+    auto it = index.find(table_key(row[0], row[1]));
+    if(it == index.end()) continue;
+
+    std::vector<std::string> cols;
+    if(!row[5].empty()) cols = split(row[5], ',');
+
+    tables[it->second].indexes.push_back(Index{
+        .name = row[2],
+        .column_names = cols,
+        .unique = (row[3] == "true"),
+        .type = upper(row[4])});
+  }
+
+  const std::string q_checks = R"SQL(
+SELECT n.nspname,
+       c.relname,
+       con.conname,
+       pg_get_constraintdef(con.oid)
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE con.contype = 'c'
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+ORDER BY n.nspname, c.relname, con.conname;
+)SQL";
+
+  for(const auto &row : query_rows(conn, db, q_checks)) {
+    if(row.size() < 4) continue;
+    auto it = index.find(table_key(row[0], row[1]));
+    if(it == index.end()) continue;
+
+    tables[it->second].checks.push_back(CheckConstraint{
+        .name = row[2],
+        .expression = row[3]});
+  }
+
+  return tables;
 }
 
-void parse_create_index(const std::string &stmt,
-                        std::unordered_map<std::string, size_t> &index,
-                        std::vector<Table> &tables)
+struct TempDbGuard
 {
-  size_t p = std::string("CREATE").size();
-  std::string ls = lower(stmt);
-  bool unique = false;
+  PostgreSQLConn conn;
+  std::string    dbname;
+  bool           enabled = true;
 
-  if(starts_with_ci(trim(stmt.substr(p)), "UNIQUE")) {
-    size_t u = ls.find("unique", p);
-    if(u != std::string::npos) { p = u + 6; unique = true; }
+  ~TempDbGuard()
+  {
+    if(!enabled) return;
+    std::string dropdb_bin = env_or_default("DIFFQL_DROPDB_BIN", "dropdb");
+    std::string inner = conn_prefix(conn) + shell_quote(dropdb_bin) +
+                        conn_opts(conn) +
+                        " --if-exists " + shell_quote(dbname);
+    run_status_inner(inner);
   }
+};
 
-  size_t iidx = ls.find("index", p);
-  if(iidx == std::string::npos) return;
-  p = skip_spaces(stmt, iidx + 5);
-
-  if(starts_with_ci(trim(stmt.substr(p)), "CONCURRENTLY")) {
-    size_t c = ls.find("concurrently", p);
-    if(c != std::string::npos) p = c + 12;
-  }
-
-  p = skip_spaces(stmt, p);
-  if(starts_with_ci(trim(stmt.substr(p)), "IF NOT EXISTS")) {
-    size_t ine = ls.find("if not exists", p);
-    if(ine != std::string::npos) p = ine + 13;
-  }
-
-  auto index_name = parse_identifier(stmt, p);
-  if(!index_name.has_value()) return;
-
-  size_t on = ls.find("on", p);
-  if(on == std::string::npos) return;
-  p = skip_spaces(stmt, on + 2);
-
-  if(starts_with_ci(trim(stmt.substr(p)), "ONLY")) {
-    size_t only = ls.find("only", p);
-    if(only != std::string::npos) p = only + 4;
-  }
-
-  auto [schema, table_name] = parse_qualified_name(stmt, p);
-  if(table_name.empty()) return;
-
-  auto it = index.find(table_key(schema, table_name));
-  if(it == index.end()) return;
-
-  std::string idx_type = "BTREE";
-  size_t using_pos = ls.find("using", p);
-  size_t open = stmt.find('(', p);
-  if(using_pos != std::string::npos && (open == std::string::npos || using_pos < open)) {
-    size_t mp = using_pos + 5;
-    auto method = parse_identifier(stmt, mp);
-    if(method.has_value()) idx_type = upper(*method);
-  }
-
-  if(open == std::string::npos) return;
-  auto [inside, close] = extract_paren(stmt, open);
-  if(close == std::string::npos) return;
-
-  tables[it->second].indexes.emplace_back(Index{
-      .name = *index_name,
-      .column_names = parse_identifier_list(inside),
-      .unique = unique,
-      .type = idx_type});
-}
-}
+} 
 
 PostgreSQLConnector::PostgreSQLConnector(PostgreSQLConn conn_object)
     : m_conn_object(std::move(conn_object))
@@ -676,29 +497,21 @@ std::vector<Table> PostgreSQLConnector::get_schema()
 std::ifstream PostgreSQLConnector::dump() const
 {
   const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
 
-  std::filesystem::path path = std::filesystem::temp_directory_path() /
-                               ("diffql_pg_" + std::to_string(now_ms) + ".sql");
+  std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("diffql_pg_" + std::to_string(now_ms) + ".sql");
 
-  std::string host = m_conn_object.host.empty() ? "localhost" : m_conn_object.host;
-  std::string port = m_conn_object.port.empty() ? "5432" : m_conn_object.port;
+  std::string pg_dump_bin = env_or_default("DIFFQL_PG_DUMP_BIN", "pg_dump");
+  std::string inner = conn_prefix(m_conn_object) + shell_quote(pg_dump_bin) +
+                      " --schema-only --no-owner --no-privileges --no-comments" +
+                      conn_opts(m_conn_object) +
+                      " -f " + shell_quote(path.string()) +
+                      " " + shell_quote(m_conn_object.db);
 
-  const char *env_pg_dump = std::getenv("DIFFQL_PG_DUMP_BIN");
-  std::string pg_dump_bin = (env_pg_dump == nullptr || std::string(env_pg_dump).empty())
-                                ? "pg_dump"
-                                : std::string(env_pg_dump);
-
-  std::string cmd;
-  if(!m_conn_object.passwd.empty()) cmd += "PGPASSWORD=" + shell_quote(m_conn_object.passwd) + " ";
-  cmd += shell_quote(pg_dump_bin) + " --schema-only --no-owner --no-privileges --no-comments";
-  cmd += " -h " + shell_quote(host);
-  cmd += " -p " + shell_quote(port);
-  cmd += " -U " + shell_quote(m_conn_object.user);
-  cmd += " -f " + shell_quote(path.string());
-  cmd += " " + shell_quote(m_conn_object.db);
-
-  if(std::system(cmd.c_str()) != 0) throw std::runtime_error("pg_dump failed");
+  if(run_status_inner(inner) != 0) throw std::runtime_error("pg_dump failed");
 
   std::ifstream file(path);
   if(!file.is_open()) throw std::runtime_error("unable to open PostgreSQL dump file");
@@ -707,40 +520,49 @@ std::ifstream PostgreSQLConnector::dump() const
 
 std::vector<Table> PostgreSQLConnector::parse(std::istream &input) const
 {
-  std::string sql((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-  std::vector<std::string> statements = split_sql_statements(sql);
+  std::string dump_sql((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  if(dump_sql.empty()) return {};
+  dump_sql = sanitize_dump_sql(dump_sql);
 
-  std::vector<Table> tables;
-  std::unordered_map<std::string, size_t> index;
-
-  for(const std::string &raw : statements) {
-    std::string s = normalize_statement_lead(raw);
-    if(s.empty()) continue;
-
-    if(starts_with_ci(s, "CREATE TABLE")) {
-      auto t = parse_create_table(s);
-      if(!t.has_value()) continue;
-
-      std::string key = table_key(t->schema, t->name);
-      auto it = index.find(key);
-      if(it == index.end()) {
-        index[key] = tables.size();
-        tables.push_back(*t);
-      } else {
-        tables[it->second] = *t;
-      }
-      continue;
-    }
-
-    if(starts_with_ci(s, "ALTER TABLE")) {
-      parse_alter_table(s, index, tables);
-      continue;
-    }
-
-    if(starts_with_ci(s, "CREATE INDEX") || starts_with_ci(s, "CREATE UNIQUE INDEX")) {
-      parse_create_index(s, index, tables);
-    }
+  std::filesystem::path restore_file = make_tmp_file("diffql_restore_");
+  {
+    std::ofstream out(restore_file);
+    if(!out.is_open()) throw std::runtime_error("unable to create restore file");
+    out << dump_sql;
   }
 
-  return tables;
+  std::string tmp_db = make_db_identifier();
+  TempDbGuard guard{m_conn_object, tmp_db, true};
+
+  std::string createdb_bin = env_or_default("DIFFQL_CREATEDB_BIN", "createdb");
+  std::string create_cmd = conn_prefix(m_conn_object) + shell_quote(createdb_bin) +
+                           conn_opts(m_conn_object) +
+                           " " + shell_quote(tmp_db);
+
+  if(run_status_inner(create_cmd) != 0) {
+    std::error_code ec;
+    std::filesystem::remove(restore_file, ec);
+    throw std::runtime_error("createdb failed");
+  }
+
+  std::string psql_bin = env_or_default("DIFFQL_PSQL_BIN", "psql");
+  std::string restore_cmd = conn_prefix(m_conn_object) + shell_quote(psql_bin) +
+                            " -X -q -v ON_ERROR_STOP=1" +
+                            conn_opts(m_conn_object) +
+                            " -d " + shell_quote(tmp_db) +
+                            " -f " + shell_quote(restore_file.string()) +
+                            " >/dev/null";
+
+  if(run_status_inner(restore_cmd) != 0) {
+    std::error_code ec;
+    std::filesystem::remove(restore_file, ec);
+    throw std::runtime_error("restore dump failed");
+  }
+
+  std::vector<Table> result = introspect_schema(m_conn_object, tmp_db);
+
+  std::error_code ec;
+  std::filesystem::remove(restore_file, ec);
+
+  return result;
 }
