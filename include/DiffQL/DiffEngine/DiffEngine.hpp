@@ -1,5 +1,6 @@
 #pragma once
 #include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
+#include "DiffQL/DiffEngine/LevDistance.hpp"
 #include <optional>
 #include <string>
 #include <vector>
@@ -55,4 +56,6 @@ private:
   std::optional<TableDiff> compare_table_by_fields(
       const Table &table_origin, const Table &table_dest
   ) const;
+
+  int lev(const std::string &origin, const std::string &dest) const;
 };

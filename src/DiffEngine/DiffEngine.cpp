@@ -32,3 +32,8 @@ std::optional<TableDiff> DiffEngine::compare_table_by_fields(
 
   return std::nullopt;
 }
+
+int DiffEngine::lev(const std::string &origin, const std::string &dest) const
+{
+  return DiffQL::lev_distance(origin, dest);
+}
