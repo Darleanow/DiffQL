@@ -1,6 +1,7 @@
 {
     "conventionalCommits.scopes": [
         "PostGreSQL",
-        "dump"
+        "dump",
+        "Parser"
     ]
 }
