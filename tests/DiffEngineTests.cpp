@@ -1,66 +1,64 @@
-#include "DiffQL/DiffEngine/LevDistance.hpp"
+#include "DiffQL/DiffEngine/DiffEngine.hpp"
 #include <gtest/gtest.h>
 
-using DiffQL::lev_distance;
+using DiffQL::jaro_winkler;
 
-TEST(LevDistance, BothEmpty)
+TEST(JaroWinkler, BothEmpty)
 {
-  EXPECT_EQ(lev_distance("", ""), 0);
+  EXPECT_FLOAT_EQ(jaro_winkler("", ""), 1.0f);
 }
 
-TEST(LevDistance, OriginEmpty)
+TEST(JaroWinkler, OriginEmpty)
 {
-  EXPECT_EQ(lev_distance("", "abc"), 3);
+  EXPECT_FLOAT_EQ(jaro_winkler("", "abc"), 0.0f);
 }
 
-TEST(LevDistance, DestEmpty)
+TEST(JaroWinkler, DestEmpty)
 {
-  EXPECT_EQ(lev_distance("abc", ""), 3);
+  EXPECT_FLOAT_EQ(jaro_winkler("abc", ""), 0.0f);
 }
 
-TEST(LevDistance, IdenticalStrings)
+TEST(JaroWinkler, IdenticalStrings)
 {
-  EXPECT_EQ(lev_distance("hello", "hello"), 0);
+  EXPECT_FLOAT_EQ(jaro_winkler("hello", "hello"), 1.0f);
 }
 
-TEST(LevDistance, SingleSubstitution)
+TEST(JaroWinkler, CompletelyDifferent)
 {
-  EXPECT_EQ(lev_distance("cat", "cut"), 1);
+  // No characters match within the window → score is 0
+  EXPECT_FLOAT_EQ(jaro_winkler("abc", "xyz"), 0.0f);
 }
 
-TEST(LevDistance, SingleInsertion)
+TEST(JaroWinkler, Symmetry)
 {
-  EXPECT_EQ(lev_distance("cat", "cats"), 1);
+  EXPECT_FLOAT_EQ(jaro_winkler("kitten", "sitting"), jaro_winkler("sitting", "kitten"));
 }
 
-TEST(LevDistance, SingleDeletion)
+// Classic Jaro-Winkler reference: MARTHA/MARHTA → ~0.9611
+TEST(JaroWinkler, ClassicMarthaMarhta)
 {
-  EXPECT_EQ(lev_distance("cats", "cat"), 1);
+  EXPECT_NEAR(jaro_winkler("MARTHA", "MARHTA"), 0.9611f, 0.001f);
 }
 
-TEST(LevDistance, ClassicKittenSitting)
+TEST(JaroWinkler, SqlColumnNamesMissingSeparator)
 {
-  EXPECT_EQ(lev_distance("kitten", "sitting"), 3);
+  // user_id vs userid: one char difference, long common prefix → very high similarity
+  EXPECT_GT(jaro_winkler("user_id", "userid"), 0.95f);
 }
 
-TEST(LevDistance, ClassicSundaySaturday)
+TEST(JaroWinkler, SqlColumnNamesIdentical)
 {
-  EXPECT_EQ(lev_distance("sunday", "saturday"), 3);
+  EXPECT_FLOAT_EQ(jaro_winkler("created_at", "created_at"), 1.0f);
 }
 
-TEST(LevDistance, CompletelyDifferent)
+TEST(JaroWinkler, SqlColumnNamesSimilar)
 {
-  EXPECT_EQ(lev_distance("abc", "xyz"), 3);
+  // first_name vs firstname: similar structure
+  EXPECT_GT(jaro_winkler("first_name", "firstname"), 0.95f);
 }
 
-TEST(LevDistance, Symmetry)
+TEST(JaroWinkler, SqlColumnNamesUnrelated)
 {
-  EXPECT_EQ(lev_distance("kitten", "sitting"), lev_distance("sitting", "kitten"));
-}
-
-TEST(LevDistance, SqlColumnNames)
-{
-  EXPECT_EQ(lev_distance("user_id", "userid"), 1);
-  EXPECT_EQ(lev_distance("created_at", "created_at"), 0);
-  EXPECT_EQ(lev_distance("first_name", "firstname"), 1);
+  // completely unrelated column names → low similarity
+  EXPECT_LT(jaro_winkler("user_id", "invoice_date"), 0.6f);
 }
