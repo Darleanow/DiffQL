@@ -7,19 +7,13 @@ Database diff project (hackathon).
 ### Prereqs
 
 ```bash
-git clone git@github.com:Darleanow/DiffQL.git --recursive
+git clone git@github.com:Darleanow/DiffQL.git 
 ```
 
 ```bash
 sudo apt install pkg-config libmariadb-dev # brew install pkg-config mariadb-connector-c
 ```
 
-```bash
-# Build sql-parser
-cd external/sql-parser
-make
-cd ..
-```
 ### Build
 
 ```bash
@@ -32,7 +26,8 @@ make
 ## Limitations
 
 For the parser:
-[Hyrise SQL-Parser](https://github.com/hyrise/sql-parser/blob/main/docs/known-limitations.md)
+We support mostly DDL, for the rest, we need to extend the antlr4 grammar.
+Due to time constraints, this won't change.
 
 For the diff engine:
 [TODO]
