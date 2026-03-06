@@ -6,7 +6,6 @@
 #include <antlr4-runtime.h>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -15,57 +14,59 @@ MariaDBConnector::MariaDBConnector(MariaDBConn conn_object)
 
 MariaDBConnector::~MariaDBConnector() {}
 
-std::vector<Table> MariaDBConnector::get_schema()
+std::vector<Table> MariaDBConnector::get_schema(ConsoleLog *log)
 {
+  auto out = [&](const std::string &line) {
+    if(log) log->append(line);
+  };
+
   auto tables = parse(dump());
 
-  // Dump of the parsing job, TODO(): To remove.
-  std::cout << "Parsing Done !" << std::endl;
-  std::cout << "Tables: " << tables.size() << std::endl;
+  out("Parsing Done !");
+  out("Tables: " + std::to_string(tables.size()));
 
   for(const auto &table : tables) {
-    std::cout << "\n" << table.name << ":\n";
-    std::cout << "  Columns: ";
+    std::string line = table.name + ":";
+    out(line);
+
+    std::string cols = "  Columns: ";
     for(const auto &col : table.columns) {
-      std::cout << col.name;
-      if(col.auto_increment) {
-        std::cout << "(AI)";
-      }
-      std::cout << ", ";
+      cols += col.name;
+      if(col.auto_increment) cols += "(AI)";
+      cols += ", ";
     }
+    out(cols);
 
     if(table.primary_key) {
-      std::cout << "\n  PK: ";
-      for(const auto &pk_col : table.primary_key->column_names) {
-        std::cout << pk_col << " ";
-      }
+      std::string pk = "  PK: ";
+      for(const auto &pk_col : table.primary_key->column_names)
+        pk += pk_col + " ";
+      out(pk);
     }
 
     if(!table.foreign_keys.empty()) {
-      std::cout << "\n  Foreign Keys:";
+      out("  Foreign Keys:");
       for(const auto &fk : table.foreign_keys) {
-        std::cout << "\n    " << fk.name << " references "
-                  << fk.referenced_table << " (";
-        for(const auto &ref_col : fk.referenced_columns) {
-          std::cout << ref_col << " ";
-        }
-        std::cout << ")";
+        std::string fk_line = "    " + fk.name + " references " + fk.referenced_table + " (";
+        for(const auto &ref_col : fk.referenced_columns)
+          fk_line += ref_col + " ";
+        fk_line += ")";
+        out(fk_line);
       }
     }
 
     if(!table.indexes.empty()) {
-      std::cout << "\n  Indexes:";
+      out("  Indexes:");
       for(const auto &idx : table.indexes) {
-        std::cout << "\n    " << idx.name << (idx.unique ? " (UNIQUE)" : "")
-                  << " [";
-        for(const auto &ic : idx.column_names) {
-          std::cout << ic << " ";
-        }
-        std::cout << "]";
+        std::string idx_line = "    " + idx.name + (idx.unique ? " (UNIQUE)" : "") + " [";
+        for(const auto &ic : idx.column_names)
+          idx_line += ic + " ";
+        idx_line += "]";
+        out(idx_line);
       }
     }
 
-    std::cout << std::endl;
+    out("");
   }
 
   return tables;
