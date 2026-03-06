@@ -1,13 +1,16 @@
 #include "DiffQL/UI/DiffViewer.hpp"
 #include "DiffQL/DiffEngine/DiffEngine.hpp"
+#include "DiffQL/MigrationGenerator/MariaDBMigrationGenerator.hpp"
+#include "DiffQL/MigrationGenerator/PostgreSQLMigrationGenerator.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <iostream>
-#include <mutex>
+#include <fstream>
 #include <iomanip>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -173,7 +176,6 @@ static void add_modified_table_rows(
        LineStyle::NORMAL}
   );
 
-  // Walk origin columns in declaration order
   for(const auto &col : origin.columns) {
     auto it = col_diff_map.find(col.name);
     if(it == col_diff_map.end()) {
@@ -380,9 +382,9 @@ static Element styled_text(const std::string &txt, LineStyle style)
   return elem;
 }
 
-static constexpr int LOG_PANEL_LINES = 8;
+constexpr int LOG_PANEL_LINES = 8;
 
-} // anonymous namespace
+}
 
 namespace DiffQL::UI {
 
@@ -402,7 +404,7 @@ bool ask_rename(
                text(" Rename detected ") | bold | hcenter,
                separator(),
                hbox({text("  "), text(orig_name) | color(Color::RedLight),
-                     text("  →  "), text(dest_name) | color(Color::GreenLight),
+                     text("  ->  "), text(dest_name) | color(Color::GreenLight),
                      text("  ")}),
                text("  Similarity: " + pct) | color(Color::YellowLight),
                separator(),
@@ -464,7 +466,7 @@ void run_diff_viewer(
 
   auto renderer = Renderer([&] {
     int total_h    = Terminal::Size().dimy;
-    int log_h      = (log && log_open) ? LOG_PANEL_LINES + 3 : 0; // +border
+    int log_h      = (log && log_open) ? LOG_PANEL_LINES + 3 : 0;
     // chrome: border(2) + header(1) + sub-sep(1) + footer(1) = 5
     int visible    = std::max(1, total_h - 5 - log_h);
     int max_scroll = std::max(0, total_rows - visible);
@@ -596,17 +598,14 @@ void run_diff_viewer(
   screen.Loop(component);
 }
 
-void run_tui_mode(
-    const std::string                                             &origin_path,
-    const std::string                                             &dest_path,
-    const std::function<std::vector<Table>(const std::string &)> &parse_fn
-)
+void run_tui_mode(SchemaLoader source_loader, SchemaLoader target_loader)
 {
   enum class Phase
   {
     LOADING,
     RENAME,
-    VIEWING
+    VIEWING,
+    GENERATING
   };
 
   std::atomic<Phase> phase {Phase::LOADING};
@@ -620,27 +619,35 @@ void run_tui_mode(
   std::optional<bool>     rename_answer;
   bool                    has_rename = false;
 
+  // Shared results written by worker, read from VIEWING/GENERATING phases.
+  std::vector<Table> origin_schema_result, dest_schema_result;
+  SchemaDiff         diff_result;
+
   std::vector<DiffRow> diff_rows;
   int                  diff_total  = 0;
   int                  diff_scroll = 0;
   int                  added = 0, dropped = 0, modified = 0;
-  bool                 log_open        = false;
+  bool                 log_open         = false;
   int                  log_panel_scroll = 0;
   std::string          diff_summary;
 
+  // Migration generation state
+  static constexpr const char *GEN_NAMES[] = {"MariaDB", "PostgreSQL"};
+  int         gen_type   = 0;
+  std::string gen_path   = "migration.sql";
+  std::string gen_status;
+
   auto screen = ScreenInteractive::FullscreenAlternateScreen();
 
-  // IMPORTANT: never redirect std::cout/cerr here — std::cout is used by
-  // FTXUI on the main thread for rendering.  Use log.append() directly.
   std::thread worker([&] {
-    log.append("Parsing " + origin_path + " ...");
-    auto origin_schema = parse_fn(origin_path);
-    log.append("  → " + std::to_string(origin_schema.size()) + " table(s) found");
+    log.append("Loading source schema...");
+    auto origin_schema = source_loader(log);
+    log.append("  -> " + std::to_string(origin_schema.size()) + " table(s) found");
     log.append("");
 
-    log.append("Parsing " + dest_path + " ...");
-    auto dest_schema = parse_fn(dest_path);
-    log.append("  → " + std::to_string(dest_schema.size()) + " table(s) found");
+    log.append("Loading target schema...");
+    auto dest_schema = target_loader(log);
+    log.append("  -> " + std::to_string(dest_schema.size()) + " table(s) found");
     log.append("");
 
     log.append("Computing schema diff...");
@@ -649,7 +656,7 @@ void run_tui_mode(
     engine.set_rename_callback(
         [&](const std::string &orig, const std::string &dest,
             float              score) -> bool {
-          log.append("  Rename candidate: '" + orig + "'  →  '" + dest + "'");
+          log.append("  Rename candidate: '" + orig + "'  ->  '" + dest + "'");
           {
             std::unique_lock<std::mutex> lock(rename_mutex);
             rename_orig   = orig;
@@ -669,7 +676,7 @@ void run_tui_mode(
           lock.unlock();
 
           log.append(
-              std::string("  → ") + (answer ? "treated as rename" : "treated as drop + add")
+              std::string("  -> ") + (answer ? "treated as rename" : "treated as drop + add")
           );
 
           phase.store(Phase::LOADING);
@@ -678,11 +685,13 @@ void run_tui_mode(
         }
     );
 
-    SchemaDiff diff = engine.compare_schemas();
+    diff_result          = engine.compare_schemas();
+    origin_schema_result = origin_schema;
+    dest_schema_result   = dest_schema;
 
-    diff_rows  = build_diff_rows(diff, origin_schema, dest_schema);
+    diff_rows  = build_diff_rows(diff_result, origin_schema_result, dest_schema_result);
     diff_total = static_cast<int>(diff_rows.size());
-    for(const auto &td : diff.table_diffs) {
+    for(const auto &td : diff_result.table_diffs) {
       switch(td.action) {
         case DiffAction::ADDED:    ++added; break;
         case DiffAction::DROPPED:  ++dropped; break;
@@ -690,7 +699,7 @@ void run_tui_mode(
       }
     }
 
-    diff_summary = std::to_string(static_cast<int>(diff.table_diffs.size())) +
+    diff_summary = std::to_string(static_cast<int>(diff_result.table_diffs.size())) +
                    " table(s) changed  +" + std::to_string(added) + " -" +
                    std::to_string(dropped) + " ~" + std::to_string(modified);
 
@@ -700,7 +709,7 @@ void run_tui_mode(
     screen.PostEvent(Event::Custom);
   });
 
-  // ── Refresh thread (keeps loading screen live while worker runs) ───────────
+  // Refresh thread (keeps loading screen live while worker runs)
   std::atomic<bool> refreshing {true};
   std::thread       refresh_thread([&] {
     using namespace std::chrono_literals;
@@ -768,13 +777,85 @@ void run_tui_mode(
       );
       elems.push_back(hbox({
           text(" [↑↓/j/k] Scroll  [PgUp/PgDn] Page  [Home/End]" + log_key +
-               "  [q] Quit  ") |
+               "  [Enter] Generate  [q] Quit  ") |
               color(Color::GrayLight),
           text(diff_summary) | bold,
           filler(),
           text(pos + " ") | color(Color::GrayLight),
       }));
       return vbox(std::move(elems));
+    }
+
+    if(p == Phase::GENERATING) {
+      Elements type_opts;
+      for(int i = 0; i < 2; ++i) {
+        auto label = text(std::string(i == gen_type ? "◉ " : "○ ") + GEN_NAMES[i]);
+        type_opts.push_back(
+            i == gen_type ? (label | bold | color(Color::CyanLight)) : label
+        );
+        if(i == 0) type_opts.push_back(text("   "));
+      }
+
+      auto path_display = hbox({
+          text("  "),
+          text(gen_path.empty() ? " " : gen_path) | color(Color::White),
+          text("_") | color(Color::CyanLight) | bold,
+          text("  "),
+      });
+
+      bool gen_ok = gen_status.rfind("ok:", 0) == 0;
+
+      if(gen_ok) {
+        std::string saved_path = gen_status.substr(3);
+        auto confirm_box = vbox({
+            text(" Migration generated successfully! ") | bold | color(Color::GreenLight) | hcenter,
+            separator(),
+            text(""),
+            text("  Saved to: " + saved_path) | color(Color::GreenLight),
+            text(""),
+            separator(),
+            hbox({
+                text("  "),
+                text("[Enter] or [q]  Exit program") | color(Color::GrayLight),
+                text("   "),
+                text("[Esc]  Back to diff") | color(Color::GrayLight),
+            }),
+            text(""),
+        }) | border;
+        return vbox({confirm_box | center | flex});
+      }
+
+      Elements status_elems;
+      if(!gen_status.empty()) {
+        status_elems.push_back(separator());
+        status_elems.push_back(
+            text("  " + gen_status) | color(Color::RedLight)
+        );
+      }
+
+      Elements form_rows;
+      form_rows.push_back(text("  Target database:") | bold);
+      form_rows.push_back(hbox(std::move(type_opts)));
+      form_rows.push_back(text(""));
+      form_rows.push_back(text("  Output file:") | bold);
+      form_rows.push_back(path_display | border);
+      for(auto &s : status_elems) form_rows.push_back(std::move(s));
+
+      auto form = vbox({
+          text(" Generate Migration Script ") | bold | hcenter,
+          separator(),
+          text(""),
+          vbox(std::move(form_rows)),
+          text(""),
+      }) | border;
+
+      auto footer_gen = hbox({
+          text(" [←/->] Select type  [Backspace] Edit path"
+               "  [Enter] Generate  [Esc] Back ") |
+              color(Color::GrayLight),
+      });
+
+      return vbox({form | center | flex, footer_gen});
     }
 
     auto snap        = log.snapshot();
@@ -819,7 +900,7 @@ void run_tui_mode(
       auto modal =
           vbox({text(" Rename detected ") | bold | hcenter, separator(),
                 hbox({text("  "), text(orig) | color(Color::RedLight),
-                      text("  →  "), text(dest) | color(Color::GreenLight),
+                      text("  ->  "), text(dest) | color(Color::GreenLight),
                       text("  ")}),
                 text("  Similarity: " + pct) | color(Color::YellowLight),
                 separator(),
@@ -868,9 +949,13 @@ void run_tui_mode(
       int visible = std::max(1, Terminal::Size().dimy - 5 - log_h);
       int max_s   = std::max(0, diff_total - visible);
 
-      if(event == Event::Character('q') || event == Event::Escape ||
-         event == Event::Return) {
+      if(event == Event::Character('q') || event == Event::Escape) {
         screen.Exit();
+        return true;
+      }
+      if(event == Event::Return) {
+        gen_status = {};
+        phase.store(Phase::GENERATING);
         return true;
       }
       if(event == Event::Character('l')) {
@@ -903,6 +988,67 @@ void run_tui_mode(
         return true;
       }
     }
+
+    if(p == Phase::GENERATING) {
+      bool gen_ok = gen_status.rfind("ok:", 0) == 0;
+      if(gen_ok) {
+        if(event == Event::Return || event == Event::Character('q')) {
+          screen.Exit();
+          return true;
+        }
+        if(event == Event::Escape) {
+          gen_status = {};
+          phase.store(Phase::VIEWING);
+          return true;
+        }
+        return false;
+      }
+      if(event == Event::Escape) {
+        phase.store(Phase::VIEWING);
+        return true;
+      }
+      if(event == Event::ArrowLeft) {
+        gen_type = std::max(0, gen_type - 1);
+        return true;
+      }
+      if(event == Event::ArrowRight) {
+        gen_type = std::min(1, gen_type + 1);
+        return true;
+      }
+      if(event == Event::Backspace && !gen_path.empty()) {
+        gen_path.pop_back();
+        return true;
+      }
+      if(event == Event::Return) {
+        std::unique_ptr<MigrationGenerator> gen =
+            gen_type == 1
+                ? std::unique_ptr<MigrationGenerator>(
+                      std::make_unique<PostgreSQLMigrationGenerator>())
+                : std::unique_ptr<MigrationGenerator>(
+                      std::make_unique<MariaDBMigrationGenerator>());
+
+        std::string script =
+            gen->generate(diff_result, origin_schema_result, dest_schema_result);
+
+        std::ofstream out(gen_path);
+        if(out) {
+          out << script;
+          gen_status = "ok:" + gen_path;
+        } else {
+          gen_status = "Error: could not write to " + gen_path;
+        }
+        return true;
+      }
+      if(event.is_character() && !event.character().empty()) {
+        char c = event.character()[0];
+        if(c >= 32 && c < 127) {
+          gen_path += c;
+          return true;
+        }
+      }
+      return false;
+    }
+
     return false;
   });
 

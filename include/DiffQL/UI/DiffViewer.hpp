@@ -6,17 +6,27 @@
 #include <string>
 #include <vector>
 
+// Loader function type: receives a ConsoleLog to write progress into,
+// returns the parsed schema.
+using SchemaLoader = std::function<std::vector<Table>(ConsoleLog &)>;
+
 namespace DiffQL::UI {
 
-// Full TUI lifecycle: loading console → rename modals → diff viewer,
-// all within a single FullscreenAlternateScreen.
-// parse_fn is called on a worker thread to load each SQL file.
-void run_tui_mode(
-    const std::string                                               &origin_path,
-    const std::string                                               &dest_path,
-    const std::function<std::vector<Table>(const std::string &)>   &parse_fn);
+// Interactive rename confirmation modal (opens its own FTXUI screen).
+bool ask_rename(
+    const std::string &orig_name,
+    const std::string &dest_name,
+    float              similarity);
 
-// Standalone diff viewer.
+// Full TUI lifecycle: loading console -> rename modals -> diff viewer,
+// all within a single FullscreenAlternateScreen.
+// source_loader and target_loader are called on a worker thread; they
+// receive a ConsoleLog to append progress lines into.
+void run_tui_mode(
+    SchemaLoader source_loader,
+    SchemaLoader target_loader);
+
+// Standalone split-pane diff viewer.
 // log is optional — [L] toggle shows captured output.
 void run_diff_viewer(
     const SchemaDiff         &diff,
