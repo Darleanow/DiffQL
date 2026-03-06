@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -811,7 +812,9 @@ void run_tui_mode(
           return vbox({console_view, footer});
         orig = rename_orig;
         dest = rename_dest;
-        pct  = std::to_string(static_cast<int>(rename_score * 100.f)) + "%";
+        std::ostringstream pct_ss;
+        pct_ss << std::fixed << std::setprecision(2) << (rename_score * 100.f);
+        pct = pct_ss.str() + "%";
       }
       auto modal =
           vbox({text(" Rename detected ") | bold | hcenter, separator(),
