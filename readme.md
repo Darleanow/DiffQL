@@ -20,7 +20,7 @@ sudo apt install pkg-config libmariadb-dev # brew install pkg-config mariadb-con
 mkdir -p build && cd build
 cmake ..
 make
-./DiffQL -h
+./../run.sh
 ```
 
 ## Limitations
@@ -28,9 +28,6 @@ make
 For the parser:
 We support mostly DDL, for the rest, we need to extend the antlr4 grammar.
 Due to time constraints, this won't change.
-
-For the diff engine:
-[TODO]
 
 ## Authors
 
