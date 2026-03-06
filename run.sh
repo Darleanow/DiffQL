@@ -1,3 +1,4 @@
 #!/bin/bash
 
-./build/DiffQL --tui SampleDB/MariaDB/nation.sql SampleDB/MariaDB/nation2.sql
+cd build
+./DiffQL --source -u root -p toor -d nation --target -u root -p toor -d nation2 -P 3307
