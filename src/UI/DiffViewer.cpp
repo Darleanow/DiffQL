@@ -47,7 +47,7 @@ struct DiffRow
 
 static std::string fmt_type(const CanonicalType &t)
 {
-  const char *base_name = "UNKNOWN";
+  const char *base_name = nullptr;
   switch(t.base) {
     case CanonicalType::INTEGER:    base_name = "INT"; break;
     case CanonicalType::BIGINT:     base_name = "BIGINT"; break;
