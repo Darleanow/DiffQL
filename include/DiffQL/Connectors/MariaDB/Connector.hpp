@@ -3,6 +3,7 @@
 #include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
 #include "DiffQL/Connectors/BaseConnector.hpp"
 #include <mariadb/mysql.h>
+#include <optional>
 #include <vector>
 
 struct MariaDBConn
@@ -11,6 +12,7 @@ struct MariaDBConn
   const std::string user;
   const std::string passwd;
   const std::string db;
+  const std::optional<int> port;
 };
 
 struct Table;

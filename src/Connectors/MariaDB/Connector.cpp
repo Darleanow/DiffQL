@@ -75,7 +75,8 @@ std::ifstream MariaDBConnector::dump()
 {
   std::string tmp_file = "dump.sql";
   int ret = system(("mariadb-dump -u " + m_conn_object.user + " -p" +
-                    m_conn_object.passwd + " -h " + m_conn_object.host + " " +
+                    m_conn_object.passwd + " -h " + m_conn_object.host +
+                    " -P " + std::to_string(m_conn_object.port.value_or(3306)) + " " +
                     m_conn_object.db +
                     " --no-data --compact --skip-comments > " + tmp_file)
                        .c_str());
