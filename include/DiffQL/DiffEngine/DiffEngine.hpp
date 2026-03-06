@@ -2,6 +2,7 @@
 #include "DiffQL/CanonicalObjectModel/Hierarchy.hpp"
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 enum class DiffAction
@@ -41,11 +42,7 @@ struct SchemaDiff
 class DiffEngine
 {
 public:
-  DiffEngine(
-      const std::vector<Table> &schema_origin,
-      const std::vector<Table> &schema_dest
-  );
-
+  DiffEngine(const std::vector<Table> &origin, const std::vector<Table> &dest);
   const SchemaDiff &compare_schemas();
 
 protected:
@@ -56,13 +53,26 @@ private:
   std::vector<Table> m_schema_dest;
   SchemaDiff         m_diff;
 
+  std::unordered_map<std::string, std::string> detect_table_renames(
+      const std::vector<const Table *> &only_origin,
+      const std::vector<const Table *> &only_dest,
+      std::vector<std::pair<const Table *, const Table *>> &out_pairs);
+
+  std::vector<ForeignKey> normalize_fk_references(
+      const std::vector<ForeignKey> &fks,
+      const std::unordered_map<std::string, std::string> &renames) const;
+
+  std::vector<ElementDiff<ForeignKey>> diff_foreign_keys(
+      const std::vector<ForeignKey> &origins,
+      const std::vector<ForeignKey> &dests) const;
+
   std::optional<TableDiff> compare_tables(
-      const Table &origin, const Table &dest
-  ) const;
+      const Table &origin,
+      const Table &dest,
+      const std::unordered_map<std::string, std::string> &renames = {}) const;
 
   template <typename T>
   std::vector<ElementDiff<T>> diff_elements(
       const std::vector<T> &origins,
-      const std::vector<T> &dests
-  ) const;
+      const std::vector<T> &dests) const;
 };

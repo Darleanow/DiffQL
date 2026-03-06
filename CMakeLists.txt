@@ -75,6 +75,9 @@ add_executable(${PROJECT_NAME}
     src/Connectors/MariaDB/Connector.cpp
     src/Parser/DDLVisitor.cpp
     src/DiffEngine/DiffEngine.cpp
+    src/MigrationGenerator/MigrationGenerator.cpp
+    src/MigrationGenerator/MariaDBMigrationGenerator.cpp
+    src/MigrationGenerator/PostgreSQLMigrationGenerator.cpp
 )
 
 # Include directories
