@@ -78,19 +78,6 @@ private:
       const std::vector<ForeignKey> &origins,
       const std::vector<ForeignKey> &dests) const;
 
-  std::unordered_map<std::string, std::string> detect_table_renames(
-      const std::vector<const Table *> &only_origin,
-      const std::vector<const Table *> &only_dest,
-      std::vector<std::pair<const Table *, const Table *>> &out_pairs);
-
-  std::vector<ForeignKey> normalize_fk_references(
-      const std::vector<ForeignKey> &fks,
-      const std::unordered_map<std::string, std::string> &renames) const;
-
-  std::vector<ElementDiff<ForeignKey>> diff_foreign_keys(
-      const std::vector<ForeignKey> &origins,
-      const std::vector<ForeignKey> &dests) const;
-
   std::optional<TableDiff> compare_tables(
       const Table &origin,
       const Table &dest,

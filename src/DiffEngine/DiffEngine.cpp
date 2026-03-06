@@ -180,17 +180,16 @@ std::unordered_map<std::string, std::string> DiffEngine::detect_table_renames(
 
     if(best_score > 0.85f && best) {
       if(m_rename_callback(orig->name, best->name, best_score)) {
-        if(auto td = compare_tables(*orig, *best)) {
-          if(orig->name != best->name)
-            td->new_name = best->name;
-          m_diff.table_diffs.push_back(std::move(*td));
-        }
-        matched_orig.insert(orig);
-        matched_dest.insert(best);
+        renames[orig->name] = best->name;
+        out_pairs.push_back({orig, best});
+        used.insert(best);
       }
     }
   }
-  const SchemaDiff &DiffEngine::compare_schemas()
+  return renames;
+}
+
+const SchemaDiff &DiffEngine::compare_schemas()
 {
   m_diff = {};
 
