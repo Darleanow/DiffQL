@@ -23,7 +23,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Dependencies
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(MARIADB mariadb)
+pkg_check_modules(MARIADB REQUIRED mariadb)
+
+if(APPLE)
+    set(PostgreSQL_ROOT /opt/homebrew/opt/libpq)
+endif()
+find_package(PostgreSQL REQUIRED)
 
 # ANTLR4 C++ Runtime
 include(FetchContent)
@@ -68,49 +73,37 @@ target_link_libraries(antlr4_generated PUBLIC antlr4_static)
 target_compile_options(antlr4_generated PRIVATE -w)
 set_target_properties(antlr4_generated PROPERTIES CXX_CLANG_TIDY "")
 
-# PostgreSQL client library (libpq)
-if(APPLE)
-    set(PostgreSQL_ROOT /opt/homebrew/opt/libpq)
-endif()
-find_package(PostgreSQL)
-
 # Create target
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
+    src/Connectors/MariaDB/Connector.cpp
+    src/Connectors/PostgreSQL/Connector.cpp
+    src/Parser/DDLVisitor.cpp
+    src/DiffEngine/DiffEngine.cpp
     src/MigrationGenerator/MigrationGenerator.cpp
     src/MigrationGenerator/MariaDBMigrationGenerator.cpp
     src/MigrationGenerator/PostgreSQLMigrationGenerator.cpp
 )
 
+# Include directories
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${MARIADB_INCLUDE_DIRS}
 )
 
-if(PostgreSQL_FOUND)
-    target_sources(${PROJECT_NAME} PRIVATE src/Connectors/PostgreSQL/Connector.cpp)
-    target_link_libraries(${PROJECT_NAME} PRIVATE PostgreSQL::PostgreSQL)
-endif()
-
-if(MARIADB_FOUND)
-    target_sources(${PROJECT_NAME} PRIVATE
-        src/Connectors/MariaDB/Connector.cpp
-        src/Parser/DDLVisitor.cpp
-        src/DiffEngine/DiffEngine.cpp
-    )
-    target_include_directories(${PROJECT_NAME} PRIVATE ${MARIADB_INCLUDE_DIRS})
-    target_link_libraries(${PROJECT_NAME} PRIVATE antlr4_generated ${MARIADB_LIBRARIES})
-endif()
+# Link libraries
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+        antlr4_generated
+        ${MARIADB_LIBRARIES}
+        PostgreSQL::PostgreSQL
+)
 
 # Compile options
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
-
-find_program(CLANG_TIDY_EXE NAMES clang-tidy HINTS /opt/homebrew/opt/llvm/bin)
-if(CLANG_TIDY_EXE)
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-        CXX_CLANG_TIDY "${CLANG_TIDY_EXE};--checks=clang-diagnostic-*,clang-analyzer-*")
-endif()
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "clang-tidy")
 
 # Tests
 enable_testing()
