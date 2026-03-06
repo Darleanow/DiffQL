@@ -3,9 +3,8 @@ services:
     image: mariadb:latest
     container_name: diffql_db_origin
     environment:
-      MARIADB_ROOT_PASSWORD: root
-      MARIADB_USER: diffql
-      MARIADB_PASSWORD: diffql
+      MARIADB_ROOT_PASSWORD: toor
+      MARIADB_DATABASE: nation
     ports:
       - "3306:3306"
     volumes:
@@ -20,9 +19,8 @@ services:
     image: mariadb:latest
     container_name: diffql_db_dest
     environment:
-      MARIADB_ROOT_PASSWORD: root
-      MARIADB_USER: diffql
-      MARIADB_PASSWORD: diffql
+      MARIADB_ROOT_PASSWORD: toor
+      MARIADB_DATABASE: nation2
     ports:
       - "3307:3306"
     volumes:

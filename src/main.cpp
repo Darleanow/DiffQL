@@ -1,174 +1,71 @@
 #include "DiffQL/Connectors/MariaDB/Connector.hpp"
-#include "DiffQL/DiffEngine/DiffEngine.hpp"
-#include "DiffQL/MigrationGenerator/MariaDBMigrationGenerator.hpp"
-#include "DiffQL/MigrationGenerator/PostgreSQLMigrationGenerator.hpp"
+#include "DiffQL/UI/DiffViewer.hpp"
 
-#include <fstream>
 #include <iostream>
-#include <memory>
-#include <sstream>
 #include <string>
 
-static const char *action_str(DiffAction a)
+static MariaDBConn parse_conn_block(char **argv, int start, int end)
 {
-  switch(a) {
-    case DiffAction::ADDED:    return "ADDED";
-    case DiffAction::DROPPED:  return "DROPPED";
-    case DiffAction::MODIFIED: return "MODIFIED";
+  MariaDBConn conn;
+  for(int i = start; i < end - 1; ++i) {
+    std::string flag = argv[i];
+    std::string val  = argv[i + 1];
+    if     (flag == "-u") conn.user   = val;
+    else if(flag == "-p") conn.passwd = val;
+    else if(flag == "-d") conn.db     = val;
+    else if(flag == "-h") conn.host   = val;
+    else if(flag == "-P") conn.port   = std::stoi(val);
   }
-  return "?";
+  return conn;
 }
 
-static const char *type_str(CanonicalType::BaseType t)
+static int find_flag(int argc, char **argv, const std::string &flag)
 {
-  switch(t) {
-    case CanonicalType::INTEGER:    return "INT";
-    case CanonicalType::BIGINT:     return "BIGINT";
-    case CanonicalType::SMALLINT:   return "SMALLINT";
-    case CanonicalType::TINYINT:    return "TINYINT";
-    case CanonicalType::MEDIUMINT:  return "MEDIUMINT";
-    case CanonicalType::VARCHAR:    return "VARCHAR";
-    case CanonicalType::TEXT:       return "TEXT";
-    case CanonicalType::MEDIUMTEXT: return "MEDIUMTEXT";
-    case CanonicalType::LONGTEXT:   return "LONGTEXT";
-    case CanonicalType::CHAR:       return "CHAR";
-    case CanonicalType::DECIMAL:    return "DECIMAL";
-    case CanonicalType::FLOAT:      return "FLOAT";
-    case CanonicalType::DOUBLE:     return "DOUBLE";
-    case CanonicalType::DATE:       return "DATE";
-    case CanonicalType::DATETIME:   return "DATETIME";
-    case CanonicalType::TIMESTAMP:  return "TIMESTAMP";
-    case CanonicalType::TIME:       return "TIME";
-    case CanonicalType::BOOLEAN:    return "BOOLEAN";
-    case CanonicalType::BLOB:       return "BLOB";
-    case CanonicalType::JSON:       return "JSON";
-    case CanonicalType::ENUM:       return "ENUM";
-  }
-  return "?";
+  for(int i = 1; i < argc; ++i)
+    if(std::string(argv[i]) == flag) return i;
+  return -1;
 }
 
-static std::string fmt_type(const CanonicalType &t)
+static void print_usage(const char *prog)
 {
-  std::ostringstream os;
-  os << type_str(t.base);
-  if(t.length)    os << "(" << *t.length << ")";
-  if(t.precision) os << "(" << *t.precision << (t.scale ? "," + std::to_string(*t.scale) : "") << ")";
-  return os.str();
+  std::cerr
+      << "Usage:\n"
+      << "  " << prog
+      << " --source -u USER -p PASS -d DB [-h HOST] [-P PORT]"
+         " --target -u USER -p PASS -d DB [-h HOST] [-P PORT]\n";
 }
 
-static void dump_column_detail(const ElementDiff<Column> &d)
+int main(int argc, char **argv)
 {
-  std::cout << "    Column [" << action_str(d.action) << "] " << d.name;
+  int src_pos = find_flag(argc, argv, "--source");
+  int tgt_pos = find_flag(argc, argv, "--target");
 
-  if(d.action == DiffAction::MODIFIED && d.before && d.after) {
-    const auto &b = *d.before;
-    const auto &a = *d.after;
-    std::string details;
-
-    if(b.type != a.type)
-      details += " type: " + fmt_type(b.type) + " -> " + fmt_type(a.type);
-    if(b.nullable != a.nullable)
-      details += std::string(" nullable: ") + (b.nullable ? "YES" : "NO") + " -> " + (a.nullable ? "YES" : "NO");
-    if(b.auto_increment != a.auto_increment)
-      details += std::string(" auto_increment: ") + (b.auto_increment ? "YES" : "NO") + " -> " + (a.auto_increment ? "YES" : "NO");
-    if(b.default_value != a.default_value)
-      details += " default: " + b.default_value.value_or("NULL") + " -> " + a.default_value.value_or("NULL");
-
-    if(!details.empty())
-      std::cout << " —" << details;
+  if(src_pos == -1 || tgt_pos == -1) {
+    print_usage(argv[0]);
+    return 1;
   }
 
-  std::cout << "\n";
-}
+  MariaDBConn src = parse_conn_block(argv, src_pos + 1, tgt_pos);
+  MariaDBConn tgt = parse_conn_block(argv, tgt_pos + 1, argc);
 
-template <typename T>
-static void dump_diffs(const char *label, const std::vector<ElementDiff<T>> &diffs)
-{
-  for(const auto &d : diffs)
-    std::cout << "    " << label << " [" << action_str(d.action) << "] " << d.name << "\n";
-}
-
-static void dump_schema_diff(const SchemaDiff &diff)
-{
-  std::cout << "\n=== Schema Diff ===\n\n";
-
-  for(const auto &td : diff.table_diffs) {
-    std::cout << "[" << action_str(td.action) << "] Table: " << td.table_name << "\n";
-
-    if(td.action == DiffAction::MODIFIED) {
-      for(const auto &cd : td.column_diffs) dump_column_detail(cd);
-      dump_diffs("ForeignKey", td.fk_diffs);
-      dump_diffs("Index",      td.index_diffs);
-      dump_diffs("Check",      td.check_diffs);
-
-      if(td.pk_diff)
-        std::cout << "    PrimaryKey [" << action_str(td.pk_diff->action) << "] "
-                  << td.pk_diff->name << "\n";
-    }
-
-    std::cout << "\n";
+  if(src.user.empty() || src.db.empty() || tgt.user.empty() || tgt.db.empty()) {
+    std::cerr << "Error: -u and -d are required for both --source and --target.\n";
+    print_usage(argv[0]);
+    return 1;
   }
 
-  std::cout << "Total: " << diff.table_diffs.size() << " table diff(s)\n";
-}
-
-int main(void)
-{
-  MariaDBConn connect_origin {
-      .host   = "localhost",
-      .user   = "root",
-      .passwd = "toor",
-      .db     = "nation"
-  };
-  MariaDBConnector connector_origin(connect_origin);
-  auto             schema_origin = connector_origin.get_schema();
-
-  MariaDBConn connect_dest {
-      .host   = "localhost",
-      .user   = "root",
-      .passwd = "toor",
-      .db     = "nation2"
-  };
-  MariaDBConnector connector_dest(connect_dest);
-  auto             schema_dest = connector_dest.get_schema();
-
-  DiffEngine  engine(schema_origin, schema_dest);
-  const auto &diff = engine.compare_schemas();
-
-  dump_schema_diff(diff);
-
-  // Generate migration scripts
-  std::cout << "\n Generate Migration Script\n";
-  std::cout << "Select target database:\n";
-  std::cout << "  1. MariaDB\n";
-  std::cout << "  2. PostgreSQL\n";
-  std::cout << "Choice [1/2]: ";
-
-  std::string choice;
-  std::getline(std::cin, choice);
-
-  std::unique_ptr<MigrationGenerator> generator;
-  std::string output_file;
-
-  if(choice == "2") {
-    generator   = std::make_unique<PostgreSQLMigrationGenerator>();
-    output_file = "migration_postgresql.sql";
-  } else {
-    generator   = std::make_unique<MariaDBMigrationGenerator>();
-    output_file = "migration_mariadb.sql";
-  }
-
-  std::string script = generator->generate(diff, schema_origin, schema_dest);
-
-  std::cout << "\n" << script;
-
-  std::ofstream out(output_file);
-  if(out) {
-    out << script;
-    std::cout << "\nMigration script saved to: " << output_file << "\n";
-  } else {
-    std::cerr << "\nFailed to save migration script to file.\n";
-  }
+  DiffQL::UI::run_tui_mode(
+      [src](ConsoleLog &log) mutable {
+        log.append("Connecting to " + src.host + "/" + src.db + " ...");
+        MariaDBConnector connector(src);
+        return connector.get_schema(&log);
+      },
+      [tgt](ConsoleLog &log) mutable {
+        log.append("Connecting to " + tgt.host + "/" + tgt.db + " ...");
+        MariaDBConnector connector(tgt);
+        return connector.get_schema(&log);
+      }
+  );
 
   return 0;
 }

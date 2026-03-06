@@ -5,8 +5,27 @@
 #include <unordered_map>
 #include <unordered_set>
 
-DiffEngine::DiffEngine(const std::vector<Table> &origin, const std::vector<Table> &dest)
-    : m_schema_origin(origin), m_schema_dest(dest) {}
+DiffEngine::DiffEngine(
+    const std::vector<Table> &schema_origin,
+    const std::vector<Table> &schema_dest
+)
+    : m_schema_origin(schema_origin),
+      m_schema_dest(schema_dest),
+      m_rename_callback([](const std::string &orig, const std::string &dest, float score) {
+        std::cout << "Table '" << orig << "' -> '" << dest
+                  << "' (similarity: " << score * 100 << "%)\n"
+                  << "Treat as rename/modification? [y/N]: ";
+        std::string answer;
+        std::getline(std::cin, answer);
+        return answer == "y" || answer == "Y";
+      })
+{
+}
+
+void DiffEngine::set_rename_callback(RenameCallback cb)
+{
+  m_rename_callback = std::move(cb);
+}
 
 template <typename T>
 std::vector<ElementDiff<T>> DiffEngine::diff_elements(
@@ -160,22 +179,13 @@ std::unordered_map<std::string, std::string> DiffEngine::detect_table_renames(
     }
 
     if(best_score > 0.85f && best) {
-      std::cout << "Table '" << orig->name << "' -> '" << best->name
-                << "' (similarity: " << best_score * 100 << "%)\n"
-                << "Treat as rename? [y/N]: ";
-
-      std::string answer;
-      std::getline(std::cin, answer);
-
-      if(answer == "y" || answer == "Y") {
-        if(orig->name != best->name)
-          renames[orig->name] = best->name;
-        out_pairs.emplace_back(orig, best);
+      if(m_rename_callback(orig->name, best->name, best_score)) {
+        renames[orig->name] = best->name;
+        out_pairs.push_back({orig, best});
         used.insert(best);
       }
     }
   }
-
   return renames;
 }
 
