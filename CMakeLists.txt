@@ -25,6 +25,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MARIADB REQUIRED mariadb)
 
+if(APPLE)
+    set(PostgreSQL_ROOT /opt/homebrew/opt/libpq)
+endif()
+find_package(PostgreSQL REQUIRED)
+
 # ANTLR4 C++ Runtime
 include(FetchContent)
 
@@ -73,6 +78,7 @@ add_executable(${PROJECT_NAME}
     src/main.cpp
     src/CanonicalObjectModel/TypeNormalization/TypeMapper.cpp
     src/Connectors/MariaDB/Connector.cpp
+    src/Connectors/PostgreSQL/Connector.cpp
     src/Parser/DDLVisitor.cpp
     src/DiffEngine/DiffEngine.cpp
     src/MigrationGenerator/MigrationGenerator.cpp
@@ -92,6 +98,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         antlr4_generated
         ${MARIADB_LIBRARIES}
+        PostgreSQL::PostgreSQL
 )
 
 # Compile options

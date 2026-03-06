@@ -122,12 +122,12 @@ int main(void)
   };
   MariaDBConnector connector_origin(connect_origin);
   auto             schema_origin = connector_origin.get_schema();
-
+  
   MariaDBConn connect_dest {
       .host   = "localhost",
-      .user   = "root",
-      .passwd = "toor",
-      .db     = "nation2"
+      .user   = "diffql",
+      .passwd = "diffql",
+      .db     = "diffql"
   };
   MariaDBConnector connector_dest(connect_dest);
   auto             schema_dest = connector_dest.get_schema();
