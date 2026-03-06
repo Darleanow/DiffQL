@@ -28,6 +28,11 @@ pkg_check_modules(MARIADB REQUIRED mariadb)
 # ANTLR4 C++ Runtime
 include(FetchContent)
 
+FetchContent_Declare(ftxui
+  GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
+  GIT_TAG v6.1.9
+)
+
 FetchContent_Declare(
     antlr4-runtime
     GIT_REPOSITORY https://github.com/antlr/antlr4.git
@@ -48,7 +53,7 @@ set(ANTLR_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(antlr4-runtime googletest)
+FetchContent_MakeAvailable(antlr4-runtime googletest ftxui)
 
 # Generated ANTLR sources (separate target, no clang-tidy)
 set(ANTLR_GENERATED_DIR ${PROJECT_SOURCE_DIR}/generated)
@@ -78,6 +83,8 @@ add_executable(${PROJECT_NAME}
     src/MigrationGenerator/MigrationGenerator.cpp
     src/MigrationGenerator/MariaDBMigrationGenerator.cpp
     src/MigrationGenerator/PostgreSQLMigrationGenerator.cpp
+    src/UI/ConsoleLog.cpp
+    src/UI/DiffViewer.cpp
 )
 
 # Include directories
@@ -92,6 +99,9 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         antlr4_generated
         ${MARIADB_LIBRARIES}
+        ftxui::screen
+        ftxui::dom
+        ftxui::component
 )
 
 # Compile options
