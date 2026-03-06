@@ -2,12 +2,46 @@
 #include "DiffQL/DiffEngine/DiffEngine.hpp"
 #include "DiffQL/MigrationGenerator/MariaDBMigrationGenerator.hpp"
 #include "DiffQL/MigrationGenerator/PostgreSQLMigrationGenerator.hpp"
+#include "DiffQL/Parser/DDLVisitor.hpp"
+#include "DiffQL/UI/DiffViewer.hpp"
+#include "MariaDBDDLLexer.h"
+#include "MariaDBDDLParser.h"
 
+#include <antlr4-runtime.h>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <string>
+
+// ─── SQL file parsing (replicates Connector::parse for standalone files) ──────
+
+static std::vector<Table> parse_sql_file(const std::string &path)
+{
+  std::ifstream file(path);
+  if(!file.is_open()) {
+    std::cerr << "Error: cannot open file: " << path << "\n";
+    return {};
+  }
+
+  std::ostringstream ss;
+  ss << file.rdbuf();
+  std::string sql = ss.str();
+
+  antlr4::ANTLRInputStream  input(sql);
+  MariaDBDDLLexer           lexer(&input);
+  antlr4::CommonTokenStream tokens(&lexer);
+  MariaDBDDLParser          parser(&tokens);
+  parser.removeErrorListeners();
+
+  auto      *tree = parser.script();
+  DDLVisitor visitor;
+  visitor.visit(tree);
+
+  return visitor.tables();
+}
+
+// ─── CLI helpers ──────────────────────────────────────────────────────────────
 
 static const char *action_str(DiffAction a)
 {
@@ -112,7 +146,17 @@ static void dump_schema_diff(const SchemaDiff &diff)
   std::cout << "Total: " << diff.table_diffs.size() << " table diff(s)\n";
 }
 
-int main(void)
+// ─── TUI mode ────────────────────────────────────────────────────────────────
+
+static int run_tui(const char *origin_path, const char *dest_path)
+{
+  DiffQL::UI::run_tui_mode(origin_path, dest_path, parse_sql_file);
+  return 0;
+}
+
+// ─── Default DB mode ─────────────────────────────────────────────────────────
+
+static int run_db_mode()
 {
   MariaDBConn connect_origin {
       .host   = "localhost",
@@ -127,7 +171,8 @@ int main(void)
       .host   = "localhost",
       .user   = "root",
       .passwd = "toor",
-      .db     = "nation2"
+      .db     = "nation2",
+      .port   = std::optional<int>(3307)
   };
   MariaDBConnector connector_dest(connect_dest);
   auto             schema_dest = connector_dest.get_schema();
@@ -148,7 +193,7 @@ int main(void)
   std::getline(std::cin, choice);
 
   std::unique_ptr<MigrationGenerator> generator;
-  std::string output_file;
+  std::string                         output_file;
 
   if(choice == "2") {
     generator   = std::make_unique<PostgreSQLMigrationGenerator>();
@@ -171,4 +216,26 @@ int main(void)
   }
 
   return 0;
+}
+
+// ─── Entry point ─────────────────────────────────────────────────────────────
+
+static void print_usage(const char *prog)
+{
+  std::cerr << "Usage:\n"
+            << "  " << prog << "                              # DB diff (default)\n"
+            << "  " << prog << " --tui <origin.sql> <dest.sql>  # TUI diff viewer\n";
+}
+
+int main(int argc, char **argv)
+{
+  if(argc == 4 && std::string(argv[1]) == "--tui")
+    return run_tui(argv[2], argv[3]);
+
+  if(argc > 1) {
+    print_usage(argv[0]);
+    return 1;
+  }
+
+  return run_db_mode();
 }
