@@ -11,6 +11,8 @@ struct PostgreSQLConn
   const std::string host;
   const std::string user;
   const std::string passwd;
+  const std::optional< int> port;
+
   const std::string db;
 };
 
