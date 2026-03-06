@@ -1,7 +1,5 @@
 #include "DiffQL/UI/ConsoleLog.hpp"
 
-// ─── ConsoleLog ───────────────────────────────────────────────────────────────
-
 void ConsoleLog::append(const std::string &line)
 {
   std::lock_guard<std::mutex> g(m_mutex);
@@ -13,8 +11,6 @@ std::vector<std::string> ConsoleLog::snapshot() const
   std::lock_guard<std::mutex> g(m_mutex);
   return m_lines;
 }
-
-// ─── ConsoleLogBuf ────────────────────────────────────────────────────────────
 
 ConsoleLogBuf::ConsoleLogBuf(ConsoleLog &log) : m_log(log) {}
 

@@ -24,8 +24,6 @@ using namespace ftxui;
 
 namespace {
 
-// ─── Line styling ────────────────────────────────────────────────────────────
-
 enum class LineStyle
 {
   NORMAL,
@@ -42,8 +40,6 @@ struct DiffRow
   LineStyle   left_style;
   LineStyle   right_style;
 };
-
-// ─── Type / column formatting ─────────────────────────────────────────────────
 
 static std::string fmt_type(const CanonicalType &t)
 {
@@ -102,8 +98,6 @@ static std::string join_names(const std::vector<std::string> &names)
   return ss.str();
 }
 
-// ─── Full table renderer (for ADDED / DROPPED tables) ────────────────────────
-
 static std::vector<std::string> render_table_lines(const Table &table)
 {
   std::vector<std::string> lines;
@@ -157,8 +151,6 @@ static std::vector<std::string> render_table_lines(const Table &table)
   lines.push_back(");");
   return lines;
 }
-
-// ─── MODIFIED table: side-by-side column diff ────────────────────────────────
 
 static void add_modified_table_rows(
     std::vector<DiffRow> &rows,
@@ -318,8 +310,6 @@ static void add_modified_table_rows(
   rows.push_back({");", ");", LineStyle::NORMAL, LineStyle::NORMAL});
 }
 
-// ─── Top-level diff row builder ───────────────────────────────────────────────
-
 static std::vector<DiffRow> build_diff_rows(
     const SchemaDiff         &diff,
     const std::vector<Table> &origin_schema,
@@ -376,8 +366,6 @@ static std::vector<DiffRow> build_diff_rows(
   return rows;
 }
 
-// ─── FTXUI element helpers ────────────────────────────────────────────────────
-
 static Element styled_text(const std::string &txt, LineStyle style)
 {
   auto elem = text(txt);
@@ -394,8 +382,6 @@ static Element styled_text(const std::string &txt, LineStyle style)
 static constexpr int LOG_PANEL_LINES = 8;
 
 } // anonymous namespace
-
-// ─── Public API ───────────────────────────────────────────────────────────────
 
 namespace DiffQL::UI {
 
@@ -475,7 +461,6 @@ void run_diff_viewer(
 
   auto screen = ScreenInteractive::FullscreenAlternateScreen();
 
-  // ── Renderer ──────────────────────────────────────────────────────────────
   auto renderer = Renderer([&] {
     int total_h    = Terminal::Size().dimy;
     int log_h      = (log && log_open) ? LOG_PANEL_LINES + 3 : 0; // +border
@@ -509,7 +494,6 @@ void run_diff_viewer(
 
     std::string log_key = log ? "  [L] Log" : "";
 
-    // ── Optional log panel ─────────────────────────────────────────────────
     Elements main_elements;
 
     if(log && log_open) {
@@ -537,7 +521,6 @@ void run_diff_viewer(
       );
     }
 
-    // ── Diff split pane ────────────────────────────────────────────────────
     main_elements.push_back(
         vbox({
             hbox({
@@ -554,7 +537,6 @@ void run_diff_viewer(
         }) | border | flex
     );
 
-    // ── Footer ─────────────────────────────────────────────────────────────
     main_elements.push_back(hbox({
         text(" [↑↓/j/k] Scroll  [PgUp/PgDn] Page  [Home/End]" + log_key +
              "  [q] Quit  ") |
@@ -567,7 +549,6 @@ void run_diff_viewer(
     return vbox(std::move(main_elements));
   });
 
-  // ── Keyboard handler ───────────────────────────────────────────────────────
   auto component = CatchEvent(renderer, [&](Event event) -> bool {
     int total_h    = Terminal::Size().dimy;
     int log_h      = (log && log_open) ? LOG_PANEL_LINES + 3 : 0;
@@ -614,8 +595,6 @@ void run_diff_viewer(
   screen.Loop(component);
 }
 
-// ─── Full TUI lifecycle ───────────────────────────────────────────────────────
-
 void run_tui_mode(
     const std::string                                             &origin_path,
     const std::string                                             &dest_path,
@@ -631,10 +610,8 @@ void run_tui_mode(
 
   std::atomic<Phase> phase {Phase::LOADING};
 
-  // ── Console log ────────────────────────────────────────────────────────────
   ConsoleLog log;
 
-  // ── Rename dialog state ────────────────────────────────────────────────────
   std::mutex              rename_mutex;
   std::condition_variable rename_cv;
   std::string             rename_orig, rename_dest;
@@ -642,7 +619,6 @@ void run_tui_mode(
   std::optional<bool>     rename_answer;
   bool                    has_rename = false;
 
-  // ── Diff viewer state (filled by worker before VIEWING) ───────────────────
   std::vector<DiffRow> diff_rows;
   int                  diff_total  = 0;
   int                  diff_scroll = 0;
@@ -653,7 +629,6 @@ void run_tui_mode(
 
   auto screen = ScreenInteractive::FullscreenAlternateScreen();
 
-  // ── Worker thread ──────────────────────────────────────────────────────────
   // IMPORTANT: never redirect std::cout/cerr here — std::cout is used by
   // FTXUI on the main thread for rendering.  Use log.append() directly.
   std::thread worker([&] {
@@ -735,12 +710,10 @@ void run_tui_mode(
     }
   });
 
-  // ── Renderer ───────────────────────────────────────────────────────────────
   auto renderer = Renderer([&] {
     auto p      = phase.load();
     int  term_h = Terminal::Size().dimy;
 
-    // ── VIEWING: diff split-pane ─────────────────────────────────────────────
     if(p == Phase::VIEWING) {
       int log_h   = log_open ? LOG_PANEL_LINES + 3 : 0;
       int visible = std::max(1, term_h - 5 - log_h);
@@ -803,7 +776,6 @@ void run_tui_mode(
       return vbox(std::move(elems));
     }
 
-    // ── LOADING / RENAME: console log view ───────────────────────────────────
     auto snap        = log.snapshot();
     int  log_total   = static_cast<int>(snap.size());
     int  log_visible = std::max(1, term_h - 5);
@@ -831,7 +803,6 @@ void run_tui_mode(
             color(Color::GrayLight),
     });
 
-    // ── RENAME: overlay modal on top of console ───────────────────────────────
     if(p == Phase::RENAME) {
       std::string orig, dest, pct;
       {
@@ -863,11 +834,9 @@ void run_tui_mode(
     return vbox({console_view, footer});
   });
 
-  // ── Keyboard handler ────────────────────────────────────────────────────────
   auto component = CatchEvent(renderer, [&](Event event) -> bool {
     auto p = phase.load();
 
-    // ── RENAME phase: Y/N only ───────────────────────────────────────────────
     if(p == Phase::RENAME) {
       bool answered = false;
       bool answer   = false;
@@ -891,7 +860,6 @@ void run_tui_mode(
       return false;
     }
 
-    // ── VIEWING phase: diff navigation ───────────────────────────────────────
     if(p == Phase::VIEWING) {
       int log_h   = log_open ? LOG_PANEL_LINES + 3 : 0;
       int visible = std::max(1, Terminal::Size().dimy - 5 - log_h);
@@ -942,4 +910,4 @@ void run_tui_mode(
   worker.join();
 }
 
-} // namespace DiffQL::UI
+}

@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-// Thread-safe line buffer for captured console output.
 class ConsoleLog
 {
 public:
@@ -23,7 +22,9 @@ public:
   explicit ConsoleLogBuf(ConsoleLog &log);
 
 protected:
+  // Called by the streambuf machinery for single-char writes.
   int             overflow(int c) override;
+  // Called by the streambuf machinery for bulk string writes.
   std::streamsize xsputn(const char *s, std::streamsize n) override;
 
 private:

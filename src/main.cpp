@@ -14,8 +14,6 @@
 #include <sstream>
 #include <string>
 
-// ─── SQL file parsing (replicates Connector::parse for standalone files) ──────
-
 static std::vector<Table> parse_sql_file(const std::string &path)
 {
   std::ifstream file(path);
@@ -40,8 +38,6 @@ static std::vector<Table> parse_sql_file(const std::string &path)
 
   return visitor.tables();
 }
-
-// ─── CLI helpers ──────────────────────────────────────────────────────────────
 
 static const char *action_str(DiffAction a)
 {
