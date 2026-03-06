@@ -2,13 +2,13 @@
 
 void ConsoleLog::append(const std::string &line)
 {
-  std::lock_guard<std::mutex> g(m_mutex);
+  std::lock_guard<std::mutex> lock(m_mutex);
   m_lines.push_back(line);
 }
 
 std::vector<std::string> ConsoleLog::snapshot() const
 {
-  std::lock_guard<std::mutex> g(m_mutex);
+  std::lock_guard<std::mutex> lock(m_mutex);
   return m_lines;
 }
 
